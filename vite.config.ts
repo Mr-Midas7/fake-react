@@ -7,10 +7,10 @@ import tsconfigPaths from "vite-tsconfig-paths";
 export default defineConfig({
   plugins: [
     tsconfigPaths(),
-    react(),
-    tailwindcss(),
     tanstackStart({
       server: { entry: "server" },
     }),
+    react(),
+    tailwindcss(),
   ],
 });
