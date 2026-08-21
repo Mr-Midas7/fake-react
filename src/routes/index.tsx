@@ -10,7 +10,7 @@ import {
   Wrench,
 } from "lucide-react";
 
-import famImage from "@/assets/fam-image.jpg.asset.json";
+import famImage from "@/assets/fam-image.jpg?url";
 import logo from "@/assets/logo-shp.png.asset.json";
 import { ProductCard } from "@/components/site/product-card";
 import { SiteFooter } from "@/components/site/site-footer";
@@ -208,7 +208,7 @@ function Home() {
 
         <section className="mx-auto grid w-full max-w-7xl items-center gap-10 px-4 py-16 md:grid-cols-2">
           <img
-            src={famImage.url}
+            src={famImage}
             alt="The Fake Rider Motorparts riding family at a local motocross event"
             loading="lazy"
             className="w-full rounded-2xl border border-border/70 object-cover shadow-xl"
