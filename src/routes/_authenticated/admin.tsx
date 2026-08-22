@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Archive,
+  Ban,
   Bell,
   Bike,
   CalendarDays,
@@ -66,6 +67,7 @@ const groups = [
     items: [
       { title: "Mechanics", url: "/admin/mechanics", icon: UserCheck },
       { title: "Availability", url: "/admin/availability", icon: CalendarDays },
+      { title: "Blocked Numbers", url: "/admin/blocked-numbers", icon: Ban },
     ],
   },
   {
@@ -133,7 +135,7 @@ function AdminLayout() {
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
         <Sidebar collapsible="icon">
-          <SidebarContent className="h-full overflow-y-auto">
+          <SidebarContent>
             <div className="flex-shrink-0">
               <div className="flex items-center gap-2 px-3 py-4">
                 <img src={logo.url} alt="Fake Rider logo" className="h-9 w-9 object-contain" />
@@ -177,7 +179,7 @@ function AdminLayout() {
         </Sidebar>
 
         <div className="flex min-h-0 flex-1 flex-col">
-          <header className="sticky top-0 z-10 flex h-14 items-center gap-3 border-b border-border bg-background/90 px-4 backdrop-blur">
+          <header className="sticky top-0 z-10 flex h-14 flex-wrap items-center gap-3 border-b border-border bg-background/90 px-4 backdrop-blur">
             <SidebarTrigger />
             <Link to="/" className="text-xs text-muted-foreground uppercase hover:text-foreground">
               View public site
@@ -197,7 +199,7 @@ function AdminLayout() {
                 onClick={signOut}
                 className="font-display uppercase"
               >
-                <LogOut /> Exit
+                <LogOut /> <span className="hidden sm:inline">Exit</span>
               </Button>
             </div>
           </header>

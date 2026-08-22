@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export const SHOP = {
   name: "Fake Rider Motorparts",
   tagline: "Motorparts, Accessories & Race-Grade Service",
@@ -136,12 +138,16 @@ export function decodeBlockReason(reason: string | null): {
   return { endTime: rest.slice(0, 5), userReason: rest.slice(pipeIdx + 1) };
 }
 
+export const phoneSchema = z
+  .string()
+  .trim()
+  .regex(/^(09\d{9}|\+639\d{9})$/, "Enter a valid PH mobile number (09XXXXXXXXX)");
+
 /** Booking rule: the slot must start at least 48 hours from now (Manila). */
 export function isSlotBookable(dateIso: string, time: string) {
   return manilaTimestamp(dateIso, time) - Date.now() >= SHOP.noticeHours * 3600 * 1000;
 }
 
-/** Earliest date that can contain a bookable slot (48 hours from now, Manila). */
 export function earliestBookableDate() {
   const now = manilaNow();
   const ts = manilaTimestamp(now.date, `${now.time}:00`);

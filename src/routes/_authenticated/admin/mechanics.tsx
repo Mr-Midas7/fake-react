@@ -62,7 +62,14 @@ function MechanicsPage() {
     queryFn: async () => {
       const { data, error } = await supabase.from("crew_members").select("*").order("name");
       if (error) throw error;
-      return data as CrewMember[];
+      const seen = new Set<string>();
+      const deduped: CrewMember[] = [];
+      for (const c of data as CrewMember[]) {
+        if (seen.has(c.name.trim())) continue;
+        seen.add(c.name.trim());
+        deduped.push(c);
+      }
+      return deduped;
     },
   });
 
@@ -177,7 +184,7 @@ function MechanicsPage() {
             value={filterName}
             onChange={(e) => setFilterName(e.target.value)}
             placeholder="Search by name..."
-            className="w-48"
+            className="w-full sm:w-48"
           />
         </div>
 
@@ -187,7 +194,7 @@ function MechanicsPage() {
             value={filterStatus}
             onValueChange={(v) => setFilterStatus(v as "all" | "active" | "inactive")}
           >
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-full sm:w-40">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

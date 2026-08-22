@@ -4,8 +4,8 @@ VALUES ('products', 'products', true)
 ON CONFLICT (id) DO NOTHING;
 
 -- Allow authenticated admin users to upload/select/update/delete objects in the products bucket
-INSERT INTO storage.objects (bucket_id, name, owner, created_at, updated_at, path_tokens)
-SELECT 'products', '', NULL, now(), now(), ARRAY[]::text[]
+INSERT INTO storage.objects (bucket_id, name, owner, created_at, updated_at)
+SELECT 'products', '', NULL, now(), now()
 WHERE FALSE;
 
 -- Policies for the products storage bucket

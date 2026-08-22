@@ -281,7 +281,7 @@ export const ProductManager = forwardRef<
                 setFilterModel("");
               }}
             >
-              <SelectTrigger className="w-48">
+              <SelectTrigger className="w-full sm:w-48">
                 <SelectValue placeholder="All brands" />
               </SelectTrigger>
               <SelectContent>
@@ -297,7 +297,7 @@ export const ProductManager = forwardRef<
           <div className="space-y-1.5">
             <Label className="text-sm">Model</Label>
             <Select value={filterModel} onValueChange={setFilterModel} disabled={!filterBrand}>
-              <SelectTrigger className="w-56">
+              <SelectTrigger className="w-full sm:w-56">
                 <SelectValue placeholder={filterBrand ? "All models" : "Select a brand first"} />
               </SelectTrigger>
               <SelectContent>
@@ -330,7 +330,7 @@ export const ProductManager = forwardRef<
           <div className="space-y-1.5">
             <Label className="text-sm">Brand</Label>
             <Select value={filterBrand} onValueChange={setFilterBrand}>
-              <SelectTrigger className="w-48">
+              <SelectTrigger className="w-full sm:w-48">
                 <SelectValue placeholder="All brands" />
               </SelectTrigger>
               <SelectContent>
@@ -350,7 +350,7 @@ export const ProductManager = forwardRef<
               value={filterStock}
               onValueChange={(v) => setFilterStock(v as "all" | "in_stock" | "out")}
             >
-              <SelectTrigger className="w-40">
+              <SelectTrigger className="w-full sm:w-40">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

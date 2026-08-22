@@ -1,12 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
-import { addDays, decodeBlockReason, earliestBookableDate, isSlotBookable } from "./shop";
-
-const phoneSchema = z
-  .string()
-  .trim()
-  .regex(/^(09\d{9}|\+639\d{9})$/, "Enter a valid PH mobile number (09XXXXXXXXX)");
+import {
+  addDays,
+  decodeBlockReason,
+  earliestBookableDate,
+  isSlotBookable,
+  phoneSchema,
+} from "./shop";
 
 const currentYear = new Date().getFullYear();
 
@@ -121,6 +122,19 @@ export const createBooking = createServerFn({ method: "POST" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const startTime = data.startTime.slice(0, 5);
     const slotStartMin = parseInt(startTime.slice(0, 2)) * 60 + parseInt(startTime.slice(3, 5));
+
+    const isBlocked = await supabaseAdmin
+      .from("blocked_numbers")
+      .select("id")
+      .ilike("phone", data.phone)
+      .maybeSingle();
+    if (isBlocked.data) {
+      return {
+        ok: false as const,
+        error:
+          "This number has been blocked from booking online due to previous violations. Please contact the shop directly.",
+      };
+    }
 
     const slot = await supabaseAdmin
       .from("time_slots")

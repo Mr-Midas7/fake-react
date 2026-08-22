@@ -196,7 +196,7 @@ function ReportsPage() {
             value={from}
             max={to}
             onChange={(e) => setFrom(e.target.value)}
-            className="w-44"
+            className="w-full sm:w-44"
           />
         </div>
         <div className="space-y-1.5">
@@ -206,7 +206,7 @@ function ReportsPage() {
             value={to}
             min={from}
             onChange={(e) => setTo(e.target.value)}
-            className="w-44"
+            className="w-full sm:w-44"
           />
         </div>
       </div>

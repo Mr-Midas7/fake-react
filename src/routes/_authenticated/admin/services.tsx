@@ -134,7 +134,7 @@ function ServicesAdmin() {
         <div className="space-y-1.5">
           <Label className="text-sm">Category</Label>
           <Select value={filterCategory} onValueChange={setFilterCategory}>
-            <SelectTrigger className="w-48">
+            <SelectTrigger className="w-full sm:w-48">
               <SelectValue placeholder="All categories" />
             </SelectTrigger>
             <SelectContent>
@@ -154,7 +154,7 @@ function ServicesAdmin() {
             value={filterStatus}
             onValueChange={(v) => setFilterStatus(v as "all" | "active" | "hidden")}
           >
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-full sm:w-40">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

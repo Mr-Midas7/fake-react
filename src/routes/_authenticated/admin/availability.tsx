@@ -96,7 +96,9 @@ function AvailabilityPage() {
         .eq("is_active", true)
         .order("name");
       if (error) throw error;
-      return data as CrewMember[];
+      return Array.from(
+        new Map((data ?? []).map((c) => [c.name.trim(), c])).values(),
+      ) as CrewMember[];
     },
   });
 
@@ -254,6 +256,14 @@ function AvailabilityPage() {
   const handleSave = async () => {
     if (!assignMechanic || !assignDateStr) {
       toast.error("Please select a date and mechanic");
+      return;
+    }
+
+    const alreadyAssigned = (schedules.data ?? []).some(
+      (s) => s.crew_id === assignMechanic && s.schedule_date === assignDateStr,
+    );
+    if (alreadyAssigned) {
+      toast.error("The mechanic has already been assigned that day");
       return;
     }
 

@@ -106,7 +106,7 @@ function ArchivePage() {
         .eq("is_active", false)
         .order("name");
       if (error) throw error;
-      return data;
+      return Array.from(new Map((data ?? []).map((c) => [c.name.trim(), c])).values());
     },
   });
 

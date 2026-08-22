@@ -21,6 +21,7 @@ import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authentic
 import { Route as AuthenticatedAdminAppointmentsRouteImport } from './routes/_authenticated/admin/appointments'
 import { Route as AuthenticatedAdminArchiveRouteImport } from './routes/_authenticated/admin/archive'
 import { Route as AuthenticatedAdminAvailabilityRouteImport } from './routes/_authenticated/admin/availability'
+import { Route as AuthenticatedAdminBlockedNumbersRouteImport } from './routes/_authenticated/admin/blocked-numbers'
 import { Route as AuthenticatedAdminCustomersRouteImport } from './routes/_authenticated/admin/customers'
 import { Route as AuthenticatedAdminMechanicsRouteImport } from './routes/_authenticated/admin/mechanics'
 import { Route as AuthenticatedAdminMotorcyclesRouteImport } from './routes/_authenticated/admin/motorcycles'
@@ -93,6 +94,12 @@ const AuthenticatedAdminAvailabilityRoute =
     path: '/availability',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
+const AuthenticatedAdminBlockedNumbersRoute =
+  AuthenticatedAdminBlockedNumbersRouteImport.update({
+    id: '/blocked-numbers',
+    path: '/blocked-numbers',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
 const AuthenticatedAdminCustomersRoute =
   AuthenticatedAdminCustomersRouteImport.update({
     id: '/customers',
@@ -158,6 +165,7 @@ export interface FileRoutesByFullPath {
   '/admin/appointments': typeof AuthenticatedAdminAppointmentsRoute
   '/admin/archive': typeof AuthenticatedAdminArchiveRoute
   '/admin/availability': typeof AuthenticatedAdminAvailabilityRoute
+  '/admin/blocked-numbers': typeof AuthenticatedAdminBlockedNumbersRoute
   '/admin/customers': typeof AuthenticatedAdminCustomersRoute
   '/admin/mechanics': typeof AuthenticatedAdminMechanicsRoute
   '/admin/motorcycles': typeof AuthenticatedAdminMotorcyclesRoute
@@ -179,6 +187,7 @@ export interface FileRoutesByTo {
   '/admin/appointments': typeof AuthenticatedAdminAppointmentsRoute
   '/admin/archive': typeof AuthenticatedAdminArchiveRoute
   '/admin/availability': typeof AuthenticatedAdminAvailabilityRoute
+  '/admin/blocked-numbers': typeof AuthenticatedAdminBlockedNumbersRoute
   '/admin/customers': typeof AuthenticatedAdminCustomersRoute
   '/admin/mechanics': typeof AuthenticatedAdminMechanicsRoute
   '/admin/motorcycles': typeof AuthenticatedAdminMotorcyclesRoute
@@ -203,6 +212,7 @@ export interface FileRoutesById {
   '/_authenticated/admin/appointments': typeof AuthenticatedAdminAppointmentsRoute
   '/_authenticated/admin/archive': typeof AuthenticatedAdminArchiveRoute
   '/_authenticated/admin/availability': typeof AuthenticatedAdminAvailabilityRoute
+  '/_authenticated/admin/blocked-numbers': typeof AuthenticatedAdminBlockedNumbersRoute
   '/_authenticated/admin/customers': typeof AuthenticatedAdminCustomersRoute
   '/_authenticated/admin/mechanics': typeof AuthenticatedAdminMechanicsRoute
   '/_authenticated/admin/motorcycles': typeof AuthenticatedAdminMotorcyclesRoute
@@ -227,6 +237,7 @@ export interface FileRouteTypes {
     | '/admin/appointments'
     | '/admin/archive'
     | '/admin/availability'
+    | '/admin/blocked-numbers'
     | '/admin/customers'
     | '/admin/mechanics'
     | '/admin/motorcycles'
@@ -248,6 +259,7 @@ export interface FileRouteTypes {
     | '/admin/appointments'
     | '/admin/archive'
     | '/admin/availability'
+    | '/admin/blocked-numbers'
     | '/admin/customers'
     | '/admin/mechanics'
     | '/admin/motorcycles'
@@ -271,6 +283,7 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/appointments'
     | '/_authenticated/admin/archive'
     | '/_authenticated/admin/availability'
+    | '/_authenticated/admin/blocked-numbers'
     | '/_authenticated/admin/customers'
     | '/_authenticated/admin/mechanics'
     | '/_authenticated/admin/motorcycles'
@@ -379,6 +392,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminAvailabilityRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
+    '/_authenticated/admin/blocked-numbers': {
+      id: '/_authenticated/admin/blocked-numbers'
+      path: '/blocked-numbers'
+      fullPath: '/admin/blocked-numbers'
+      preLoaderRoute: typeof AuthenticatedAdminBlockedNumbersRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
     '/_authenticated/admin/customers': {
       id: '/_authenticated/admin/customers'
       path: '/customers'
@@ -449,6 +469,7 @@ interface AuthenticatedAdminRouteChildren {
   AuthenticatedAdminAppointmentsRoute: typeof AuthenticatedAdminAppointmentsRoute
   AuthenticatedAdminArchiveRoute: typeof AuthenticatedAdminArchiveRoute
   AuthenticatedAdminAvailabilityRoute: typeof AuthenticatedAdminAvailabilityRoute
+  AuthenticatedAdminBlockedNumbersRoute: typeof AuthenticatedAdminBlockedNumbersRoute
   AuthenticatedAdminCustomersRoute: typeof AuthenticatedAdminCustomersRoute
   AuthenticatedAdminMechanicsRoute: typeof AuthenticatedAdminMechanicsRoute
   AuthenticatedAdminMotorcyclesRoute: typeof AuthenticatedAdminMotorcyclesRoute
@@ -465,6 +486,7 @@ const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
   AuthenticatedAdminAppointmentsRoute: AuthenticatedAdminAppointmentsRoute,
   AuthenticatedAdminArchiveRoute: AuthenticatedAdminArchiveRoute,
   AuthenticatedAdminAvailabilityRoute: AuthenticatedAdminAvailabilityRoute,
+  AuthenticatedAdminBlockedNumbersRoute: AuthenticatedAdminBlockedNumbersRoute,
   AuthenticatedAdminCustomersRoute: AuthenticatedAdminCustomersRoute,
   AuthenticatedAdminMechanicsRoute: AuthenticatedAdminMechanicsRoute,
   AuthenticatedAdminMotorcyclesRoute: AuthenticatedAdminMotorcyclesRoute,

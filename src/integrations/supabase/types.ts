@@ -155,6 +155,30 @@ export type Database = {
           },
         ];
       };
+      blocked_numbers: {
+        Row: {
+          id: string;
+          phone: string;
+          reason: string | null;
+          created_at: string;
+          created_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          phone: string;
+          reason?: string | null;
+          created_at?: string;
+          created_by?: string | null;
+        };
+        Update: {
+          id?: string;
+          phone?: string;
+          reason?: string | null;
+          created_at?: string;
+          created_by?: string | null;
+        };
+        Relationships: [];
+      };
       crew_availability_exceptions: {
         Row: {
           created_at: string;

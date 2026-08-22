@@ -67,7 +67,7 @@ function AppointmentsPage() {
         .select("*")
         .eq("is_active", true)
         .order("name");
-      return data ?? [];
+      return Array.from(new Map((data ?? []).map((c) => [c.name.trim(), c])).values());
     },
   });
 
@@ -135,7 +135,7 @@ function AppointmentsPage() {
           className="max-w-xs"
         />
         <Select value={status} onValueChange={setStatus}>
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-full sm:w-48">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
