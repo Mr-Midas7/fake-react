@@ -139,7 +139,7 @@ function AdminLayout() {
             <div className="flex-shrink-0">
               <div className="flex items-center gap-2 px-3 py-4">
                 <img src={logo.url} alt="Fake Rider logo" className="h-16 w-auto object-contain" />
-                <span className="font-display text-sm leading-tight tracking-wide uppercase">
+                <span className="-ml-2 font-display text-sm leading-tight tracking-wide uppercase">
                   Fake Rider
                   <span className="block text-[10px] text-muted-foreground">Admin console</span>
                 </span>
