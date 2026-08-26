@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Archive } from "lucide-react";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { z } from "zod";
 
 import { PageHeader } from "@/components/admin/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -36,14 +37,20 @@ import {
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/admin/appointments")({
+  validateSearch: z.object({
+    appointmentId: z.string().uuid().optional(),
+  }),
   component: AppointmentsPage,
 });
 
 function AppointmentsPage() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const search = Route.useSearch();
   const [status, setStatus] = useState("all");
   const [term, setTerm] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
+  const focusedAppointmentId = search.appointmentId;
 
   const appointments = useQuery({
     queryKey: ["admin-appointments"],
@@ -111,20 +118,30 @@ function AppointmentsPage() {
     },
   });
 
-  const rows = (appointments.data ?? []).filter(
-    (a) =>
+  useEffect(() => {
+    setOpenId(focusedAppointmentId ?? null);
+  }, [focusedAppointmentId]);
+
+  const rows = (appointments.data ?? []).filter((a) => {
+    if (focusedAppointmentId) return a.id === focusedAppointmentId;
+    return (
       (status === "all" || a.status === status) &&
       (term.trim() === "" ||
         `${a.reference_code} ${a.customer_name} ${a.phone} ${a.plate_number}`
           .toLowerCase()
-          .includes(term.toLowerCase())),
-  );
+          .includes(term.toLowerCase()))
+    );
+  });
 
   return (
     <div>
       <PageHeader
         title="Appointments Management"
-        description="Confirm, reschedule, assign crew and archive bookings."
+        description={
+          focusedAppointmentId
+            ? "Showing the appointment selected from Notifications."
+            : "Confirm, reschedule, assign crew and archive bookings."
+        }
       />
 
       <div className="mb-4 flex flex-wrap gap-3">
@@ -147,6 +164,14 @@ function AppointmentsPage() {
             ))}
           </SelectContent>
         </Select>
+        {focusedAppointmentId && (
+          <Button
+            variant="outline"
+            onClick={() => navigate({ to: "/admin/appointments", search: {} })}
+          >
+            Show all appointments
+          </Button>
+        )}
       </div>
 
       <Card className="border-border/70 bg-card/60">
@@ -299,7 +324,11 @@ function AppointmentsPage() {
             </TableBody>
           </Table>
           {rows.length === 0 && (
-            <p className="p-8 text-center text-sm text-muted-foreground">No appointments found.</p>
+            <p className="p-8 text-center text-sm text-muted-foreground">
+              {focusedAppointmentId
+                ? "This appointment is no longer available."
+                : "No appointments found."}
+            </p>
           )}
         </CardContent>
       </Card>

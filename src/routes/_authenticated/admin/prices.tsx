@@ -50,7 +50,7 @@ function PricesPage() {
               Services
             </TabsTrigger>
             <TabsTrigger value="products" className="font-display uppercase">
-              Parts & units
+              Parts & Accessories
             </TabsTrigger>
           </TabsList>
         </div>
@@ -87,11 +87,15 @@ function PriceTable({
   const rows = useQuery({
     queryKey: ["prices", table, filter],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from(table)
-        .select("id,name,price,is_active")
-        .eq("is_active", filter === "active")
-        .order("name");
+      const query =
+        table === "products"
+          ? supabase
+              .from("products")
+              .select("id,name,price,is_active")
+              .in("category", ["part", "accessory"])
+          : supabase.from("services").select("id,name,price,is_active");
+
+      const { data, error } = await query.eq("is_active", filter === "active").order("name");
       if (error) throw error;
       return Array.from(
         new Map(

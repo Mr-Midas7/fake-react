@@ -158,3 +158,13 @@
   background-clip: text;
   color: transparent;
 }
+
+/* Shared public-page shell: compact gutters on phones, comfortable breathing
+ * room on laptops, and a cap that prevents ultra-wide screens from stretching
+ * page content too far. */
+@utility site-container {
+  width: 100%;
+  max-width: 90rem;
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 2.5vw, 3rem);
+}

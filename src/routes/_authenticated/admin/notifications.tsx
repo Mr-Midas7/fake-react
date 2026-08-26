@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { BellRing, CheckCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -15,6 +15,7 @@ export const Route = createFileRoute("/_authenticated/admin/notifications")({
 
 function NotificationsPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const list = useQuery({
     queryKey: ["notifications"],
@@ -55,6 +56,22 @@ function NotificationsPage() {
       refresh();
     },
     onError: () => toast.error("Could not update notifications."),
+  });
+
+  const viewAppointment = useMutation({
+    mutationFn: async ({ id, isRead }: { id: string; isRead: boolean; appointmentId: string }) => {
+      if (isRead) return;
+      const { error } = await supabase.from("notifications").update({ is_read: true }).eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: async (_, notification) => {
+      refresh();
+      await navigate({
+        to: "/admin/appointments",
+        search: { appointmentId: notification.appointmentId },
+      });
+    },
+    onError: () => toast.error("Could not open this appointment. Please try again."),
   });
 
   const deleteNotification = useMutation({
@@ -116,8 +133,20 @@ function NotificationsPage() {
                 </p>
               </div>
               <div className="flex gap-2">
-                <Button asChild size="sm" variant="outline">
-                  <Link to="/admin/appointments">View appointments</Link>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!n.appointment_id || viewAppointment.isPending}
+                  onClick={() => {
+                    if (!n.appointment_id) return;
+                    viewAppointment.mutate({
+                      id: n.id,
+                      isRead: n.is_read,
+                      appointmentId: n.appointment_id,
+                    });
+                  }}
+                >
+                  View appointment
                 </Button>
                 {!n.is_read && (
                   <Button size="sm" variant="ghost" onClick={() => markOne.mutate(n.id)}>

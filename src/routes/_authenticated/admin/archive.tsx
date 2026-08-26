@@ -123,6 +123,19 @@ function ArchivePage() {
     },
   });
 
+  const archivedBlockedNumbers = useQuery({
+    queryKey: ["archived-blocked-numbers"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("blocked_numbers")
+        .select("*")
+        .eq("is_archived", true)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
   const restoreAppointment = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase
@@ -215,6 +228,25 @@ function ArchivePage() {
     },
   });
 
+  const restoreBlockedNumber = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from("blocked_numbers")
+        .update({ is_archived: false })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Blocked number restored.");
+      queryClient.invalidateQueries({ queryKey: ["archived-blocked-numbers"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["blocked-numbers"], exact: false });
+    },
+    onError: (err: Error) => {
+      console.error("Restore failed:", err);
+      toast.error(`Restore failed: ${err.message}`);
+    },
+  });
+
   const deleteItem = useMutation({
     mutationFn: async ({ id, type }: { id: string; type: string }) => {
       const tables: Record<string, string> = {
@@ -223,9 +255,15 @@ function ArchivePage() {
         product: "products",
         crew: "crew_members",
         block: "schedule_blocks",
+        blockedNumber: "blocked_numbers",
       };
       const table = tables[type] as
-        "appointments" | "services" | "products" | "crew_members" | "schedule_blocks";
+        | "appointments"
+        | "services"
+        | "products"
+        | "crew_members"
+        | "schedule_blocks"
+        | "blocked_numbers";
       if (!table) throw new Error(`Unknown type: ${type}`);
       const { error } = await supabase.from(table).delete().eq("id", id);
       if (error) throw error;
@@ -239,12 +277,14 @@ function ArchivePage() {
       queryClient.invalidateQueries({ queryKey: ["archived-motorcycles"], exact: false });
       queryClient.invalidateQueries({ queryKey: ["archived-crew"], exact: false });
       queryClient.invalidateQueries({ queryKey: ["archived-blocks"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["archived-blocked-numbers"], exact: false });
       queryClient.invalidateQueries({ queryKey: ["admin-appointments"], exact: false });
       queryClient.invalidateQueries({ queryKey: ["admin-dashboard"], exact: false });
       queryClient.invalidateQueries({ queryKey: ["admin-services"], exact: false });
       queryClient.invalidateQueries({ queryKey: ["admin-products"], exact: false });
       queryClient.invalidateQueries({ queryKey: ["crew-all"], exact: false });
       queryClient.invalidateQueries({ queryKey: ["schedule-blocks"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["blocked-numbers"], exact: false });
       queryClient.invalidateQueries({ queryKey: ["motorcycle-catalog"], exact: false });
     },
     onError: (err: Error) => {
@@ -284,6 +324,13 @@ function ArchivePage() {
     return `${b.block_date} ${b.reason ?? ""}`.toLowerCase().includes(term.toLowerCase());
   });
 
+  const blockedNumberRows = (archivedBlockedNumbers.data ?? []).filter((blockedNumber) => {
+    if (term.trim() === "") return true;
+    return `${blockedNumber.phone} ${blockedNumber.reason ?? ""}`
+      .toLowerCase()
+      .includes(term.toLowerCase());
+  });
+
   const confirmDelete = (id: string, type: string) => {
     setDeleteTarget({ id, type });
   };
@@ -298,7 +345,7 @@ function ArchivePage() {
     <div>
       <PageHeader
         title="Archive"
-        description="Archived bookings, services, products, crew, and schedule blocks. Restore them or delete permanently."
+        description="Archived bookings, services, products, crew, schedule blocks, and blocked numbers. Restore them or delete permanently."
       />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
@@ -310,6 +357,7 @@ function ArchivePage() {
             <TabsTrigger value="motorcycles">Motorcycles</TabsTrigger>
             <TabsTrigger value="crew">Pit Crew</TabsTrigger>
             <TabsTrigger value="blocks">Schedule Blocks</TabsTrigger>
+            <TabsTrigger value="blocked-numbers">Blocked Numbers</TabsTrigger>
           </TabsList>
         </div>
 
@@ -667,6 +715,68 @@ function ArchivePage() {
                         {archivedBlocks.isLoading
                           ? "Loading archive..."
                           : "No archived schedule blocks."}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="blocked-numbers">
+          <Card className="border-border/70 bg-card/60">
+            <CardContent className="overflow-x-auto p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Phone</TableHead>
+                    <TableHead>Reason</TableHead>
+                    <TableHead>Blocked on</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {blockedNumberRows.map((blockedNumber) => (
+                    <TableRow key={blockedNumber.id}>
+                      <TableCell className="font-mono text-sm">{blockedNumber.phone}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {blockedNumber.reason ?? "-"}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {new Date(blockedNumber.created_at).toLocaleDateString("en-PH", {
+                          year: "numeric",
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </TableCell>
+                      <TableCell className="flex justify-end gap-2 text-right">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => restoreBlockedNumber.mutate(blockedNumber.id)}
+                        >
+                          <RotateCcw /> Restore
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => confirmDelete(blockedNumber.id, "blockedNumber")}
+                        >
+                          <Trash2 /> Delete
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {blockedNumberRows.length === 0 && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={4}
+                        className="py-10 text-center text-sm text-muted-foreground"
+                      >
+                        {archivedBlockedNumbers.isLoading
+                          ? "Loading archive..."
+                          : "No archived blocked numbers."}
                       </TableCell>
                     </TableRow>
                   )}

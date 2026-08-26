@@ -14,6 +14,19 @@ npm i
 npm run dev
 ```
 
+## Booking protection
+
+Apply the Supabase migrations before deploying. Public availability, booking, lookup, and
+cancellation calls use the persistent rate-limit table introduced in the latest migration.
+
+To require Cloudflare Turnstile for bookings, configure both variables in the deployment
+environment. Never expose the secret key to the browser.
+
+```sh
+VITE_TURNSTILE_SITE_KEY=your-public-site-key
+TURNSTILE_SECRET_KEY=your-server-secret
+```
+
 ## Built with
 
 - TanStack Start

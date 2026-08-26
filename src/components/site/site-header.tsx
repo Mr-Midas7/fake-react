@@ -18,7 +18,7 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/70 bg-background/85 backdrop-blur">
-      <div className="mx-auto flex h-20 w-full max-w-7xl items-center gap-4 px-4">
+      <div className="site-container flex h-20 items-center gap-4">
         <Link to="/" className="flex items-center">
           <img
             src={logo.url}
@@ -62,7 +62,7 @@ export function SiteHeader() {
       </div>
 
       <div className={cn("border-t border-border/70 md:hidden", open ? "block" : "hidden")}>
-        <nav className="mx-auto flex max-w-7xl flex-col p-3">
+        <nav className="site-container flex flex-col py-3">
           {links.map((l) => (
             <Link
               key={l.to}

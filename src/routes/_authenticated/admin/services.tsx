@@ -51,15 +51,19 @@ type Service = {
   category: string;
 };
 
-const blank = { name: "", description: "", duration_minutes: "60", is_active: true };
+const blank = { name: "", description: "", price: "", duration_minutes: "60", is_active: true };
 
 function ServicesAdmin() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Service | null>(null);
   const [form, setForm] = useState({ ...blank });
+  const [formError, setFormError] = useState("");
   const [filterCategory, setFilterCategory] = useState<string>("");
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "hidden">("all");
+  const hasValidNewPrice =
+    editing !== null ||
+    (form.price.trim() !== "" && Number.isFinite(Number(form.price)) && Number(form.price) >= 0);
 
   const services = useQuery({
     queryKey: ["admin-services"],
@@ -83,9 +87,14 @@ function ServicesAdmin() {
         duration_minutes: Number(form.duration_minutes) || 60,
         is_active: form.is_active,
       };
+
+      if (!editing && !hasValidNewPrice) {
+        throw new Error("Enter a valid price.");
+      }
+
       const res = editing
         ? await supabase.from("services").update(payload).eq("id", editing.id)
-        : await supabase.from("services").insert(payload);
+        : await supabase.from("services").insert({ ...payload, price: Number(form.price) });
       if (res.error) throw res.error;
     },
     onSuccess: () => {
@@ -111,6 +120,24 @@ function ServicesAdmin() {
     onError: (err: Error) => toast.error(`Archive failed: ${err.message}`),
   });
 
+  function validateForm() {
+    if (form.name.trim().length < 2) {
+      setFormError("Enter a service name with at least 2 characters.");
+      return false;
+    }
+    const duration = Number(form.duration_minutes);
+    if (!Number.isInteger(duration) || duration < 15 || duration > 480) {
+      setFormError("Enter a service duration from 15 to 480 minutes.");
+      return false;
+    }
+    if (!editing && !hasValidNewPrice) {
+      setFormError("Enter a valid price of PHP 0 or more.");
+      return false;
+    }
+    setFormError("");
+    return true;
+  }
+
   return (
     <div>
       <PageHeader
@@ -122,6 +149,7 @@ function ServicesAdmin() {
             onClick={() => {
               setEditing(null);
               setForm({ ...blank });
+              setFormError("");
               setOpen(true);
             }}
           >
@@ -226,9 +254,11 @@ function ServicesAdmin() {
                           setForm({
                             name: s.name,
                             description: s.description ?? "",
+                            price: String(s.price),
                             duration_minutes: String(s.duration_minutes),
                             is_active: s.is_active,
                           });
+                          setFormError("");
                           setOpen(true);
                         }}
                       >
@@ -257,7 +287,10 @@ function ServicesAdmin() {
               <Label>Name</Label>
               <Input
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, name: e.target.value });
+                  setFormError("");
+                }}
               />
             </div>
             <div className="space-y-1.5">
@@ -265,7 +298,12 @@ function ServicesAdmin() {
               <Input
                 value={form.duration_minutes}
                 inputMode="numeric"
-                onChange={(e) => setForm({ ...form, duration_minutes: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, duration_minutes: e.target.value.replace(/\D/g, "") });
+                  setFormError("");
+                }}
+                min="15"
+                max="480"
               />
             </div>
             <div className="space-y-1.5">
@@ -275,6 +313,31 @@ function ServicesAdmin() {
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
               />
             </div>
+            {editing ? (
+              <p className="text-xs text-muted-foreground">
+                Current price: {formatPHP(editing.price)}. To change it, use{" "}
+                <a href="/admin/prices" className="underline">
+                  Price Management
+                </a>
+                .
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                <Label>Price (PHP)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={form.price}
+                  onChange={(e) => {
+                    setForm({ ...form, price: e.target.value });
+                    setFormError("");
+                  }}
+                  placeholder="0.00"
+                />
+              </div>
+            )}
             <label className="flex items-center gap-2 text-sm">
               <Switch
                 checked={form.is_active}
@@ -283,8 +346,14 @@ function ServicesAdmin() {
               Show on the public booking form
             </label>
           </div>
+          {formError && <p className="text-xs text-destructive">{formError}</p>}
           <DialogFooter>
-            <Button onClick={() => save.mutate()} disabled={save.isPending || !form.name.trim()}>
+            <Button
+              onClick={() => {
+                if (validateForm()) save.mutate();
+              }}
+              disabled={save.isPending}
+            >
               Save service
             </Button>
           </DialogFooter>

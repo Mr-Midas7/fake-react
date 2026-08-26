@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Plus, Trash2, X } from "lucide-react";
+import { Archive, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
-import { phoneSchema } from "@/lib/shop";
+import { PHONE_VALIDATION_MESSAGE, phoneSchema, sanitizePhilippineMobileInput } from "@/lib/shop";
 
 type BlockedNumber = {
   id: string;
@@ -35,6 +35,7 @@ type BlockedNumber = {
   reason: string | null;
   created_at: string;
   created_by: string | null;
+  is_archived: boolean;
 };
 
 export const Route = createFileRoute("/_authenticated/admin/blocked-numbers")({
@@ -46,6 +47,7 @@ function BlockedNumbersPage() {
   const [open, setOpen] = useState(false);
   const [phone, setPhone] = useState("");
   const [reason, setReason] = useState("");
+  const [phoneError, setPhoneError] = useState("");
 
   const blocked = useQuery({
     queryKey: ["blocked-numbers"],
@@ -53,6 +55,7 @@ function BlockedNumbersPage() {
       const { data, error } = await supabase
         .from("blocked_numbers")
         .select("*")
+        .eq("is_archived", false)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as BlockedNumber[];
@@ -60,23 +63,45 @@ function BlockedNumbersPage() {
   });
 
   const add = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (normalizedPhone: string) => {
+      const existing = await supabase
+        .from("blocked_numbers")
+        .select("id,is_archived")
+        .ilike("phone", normalizedPhone)
+        .maybeSingle();
+      if (existing.error) throw existing.error;
+
+      if (existing.data) {
+        if (!existing.data.is_archived) {
+          throw new Error("This phone number is already blocked.");
+        }
+
+        const { error } = await supabase
+          .from("blocked_numbers")
+          .update({ is_archived: false, reason: reason.trim() || null })
+          .eq("id", existing.data.id);
+        if (error) throw error;
+        return "restored" as const;
+      }
+
       const { error } = await supabase.from("blocked_numbers").insert({
-        phone,
+        phone: normalizedPhone,
         reason: reason.trim() || null,
       });
       if (error) throw error;
+      return "blocked" as const;
     },
-    onSuccess: () => {
-      toast.success("Number blocked");
+    onSuccess: (result) => {
+      toast.success(result === "restored" ? "Number blocked again" : "Number blocked");
       setPhone("");
       setReason("");
       setOpen(false);
-      qc.invalidateQueries({ queryKey: ["blocked-numbers"] });
+      qc.invalidateQueries({ queryKey: ["blocked-numbers"], exact: false });
+      qc.invalidateQueries({ queryKey: ["archived-blocked-numbers"], exact: false });
     },
     onError: (err: Error) => {
       const msg = err.message.toLowerCase();
-      if (msg.includes("unique") || msg.includes("duplicate")) {
+      if (msg.includes("unique") || msg.includes("duplicate") || msg.includes("already blocked")) {
         toast.error("This phone number is already blocked.");
       } else {
         console.error("Block failed:", err);
@@ -85,30 +110,35 @@ function BlockedNumbersPage() {
     },
   });
 
-  const remove = useMutation({
+  const archive = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("blocked_numbers").delete().eq("id", id);
+      const { error } = await supabase
+        .from("blocked_numbers")
+        .update({ is_archived: true })
+        .eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
-      toast.success("Number unblocked");
-      qc.invalidateQueries({ queryKey: ["blocked-numbers"] });
+      toast.success("Blocked number archived");
+      qc.invalidateQueries({ queryKey: ["blocked-numbers"], exact: false });
+      qc.invalidateQueries({ queryKey: ["archived-blocked-numbers"], exact: false });
     },
     onError: (err: Error) => {
-      console.error("Remove failed:", err);
-      toast.error(`Could not unblock the number: ${err.message}`);
+      console.error("Archive failed:", err);
+      toast.error(`Could not archive the blocked number: ${err.message}`);
     },
   });
 
   const handleAdd = async () => {
-    const trimmed = phone.trim();
+    let normalizedPhone: string;
     try {
-      phoneSchema.parse(trimmed);
+      normalizedPhone = phoneSchema.parse(phone);
     } catch {
-      toast.error("Enter a valid PH mobile number (09XXXXXXXXX)");
+      setPhoneError(PHONE_VALIDATION_MESSAGE);
+      toast.error(PHONE_VALIDATION_MESSAGE);
       return;
     }
-    await add.mutate();
+    add.mutate(normalizedPhone);
   };
 
   return (
@@ -122,6 +152,7 @@ function BlockedNumbersPage() {
             onClick={() => {
               setPhone("");
               setReason("");
+              setPhoneError("");
               setOpen(true);
             }}
           >
@@ -157,10 +188,10 @@ function BlockedNumbersPage() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => remove.mutate(b.id)}
-                      disabled={remove.isPending}
+                      onClick={() => archive.mutate(b.id)}
+                      disabled={archive.isPending}
                     >
-                      <X className="h-4 w-4" />
+                      <Archive className="h-4 w-4" /> Archive
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -192,10 +223,19 @@ function BlockedNumbersPage() {
             <div className="space-y-1.5">
               <Label>Phone number</Label>
               <Input
+                type="tel"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="09XXXXXXXXX"
+                maxLength={11}
+                inputMode="numeric"
+                autoComplete="tel"
+                onChange={(e) => {
+                  setPhone(sanitizePhilippineMobileInput(e.target.value));
+                  setPhoneError("");
+                }}
+                placeholder="09171234567"
+                aria-invalid={!!phoneError}
               />
+              {phoneError && <p className="text-xs text-destructive">{phoneError}</p>}
             </div>
             <div className="space-y-1.5">
               <Label>Reason (optional)</Label>

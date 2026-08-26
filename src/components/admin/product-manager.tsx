@@ -54,6 +54,7 @@ const blank = {
   name: "",
   brand: "",
   description: "",
+  price: "",
   image_url: "",
   in_stock: true,
   is_featured: false,
@@ -73,6 +74,7 @@ export const ProductManager = forwardRef<
   const [editing, setEditing] = useState<Product | null>(null);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ ...blank });
+  const [formError, setFormError] = useState("");
   const [imageSource, setImageSource] = useState<"url" | "local">("url");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
@@ -80,6 +82,10 @@ export const ProductManager = forwardRef<
   const [filterBrand, setFilterBrand] = useState<string>("");
   const [filterModel, setFilterModel] = useState<string>("");
   const [filterStock, setFilterStock] = useState<"all" | "in_stock" | "out">("all");
+  const hasValidNewPrice =
+    isMotorcycle ||
+    editing !== null ||
+    (form.price.trim() !== "" && Number.isFinite(Number(form.price)) && Number(form.price) >= 0);
 
   useImperativeHandle(ref, () => ({
     openNew,
@@ -204,9 +210,14 @@ export const ProductManager = forwardRef<
           is_active: form.is_active,
           category: editing ? editing.category : category,
         };
+
+        if (!hasValidNewPrice) {
+          throw new Error("Enter a valid price.");
+        }
+
         const res = editing
           ? await supabase.from("products").update(payload).eq("id", editing.id)
-          : await supabase.from("products").insert(payload);
+          : await supabase.from("products").insert({ ...payload, price: Number(form.price) });
         if (res.error) throw res.error;
       }
     },
@@ -248,6 +259,7 @@ export const ProductManager = forwardRef<
     setImageSource("url");
     setUploadedFile(null);
     setUploadPreview(null);
+    setFormError("");
     setOpen(true);
   }
 
@@ -257,6 +269,7 @@ export const ProductManager = forwardRef<
       name: p.name,
       brand: p.brand ?? "",
       description: p.description ?? "",
+      price: String(p.price),
       image_url: p.image_url ?? "",
       in_stock: p.in_stock,
       is_featured: p.is_featured,
@@ -265,7 +278,37 @@ export const ProductManager = forwardRef<
     setImageSource(p.image_url ? "url" : "url");
     setUploadedFile(null);
     setUploadPreview(null);
+    setFormError("");
     setOpen(true);
+  }
+
+  function validateForm() {
+    if (form.name.trim().length < 2) {
+      setFormError("Enter an item name with at least 2 characters.");
+      return false;
+    }
+    if (isMotorcycle && !form.brand.trim()) {
+      setFormError("Enter the motorcycle brand.");
+      return false;
+    }
+    if (!isMotorcycle && !editing && !hasValidNewPrice) {
+      setFormError("Enter a valid price of PHP 0 or more.");
+      return false;
+    }
+    if (imageSource === "url" && form.image_url.trim()) {
+      try {
+        new URL(form.image_url.trim());
+      } catch {
+        setFormError("Enter a valid image URL, including https://, or choose Local Storage.");
+        return false;
+      }
+    }
+    if (imageSource === "local" && uploadedFile && !uploadedFile.type.startsWith("image/")) {
+      setFormError("Choose a valid image file.");
+      return false;
+    }
+    setFormError("");
+    return true;
   }
 
   return (
@@ -462,13 +505,27 @@ export const ProductManager = forwardRef<
                 )}
               </div>
             )}
-            {!isMotorcycle && (
+            {!isMotorcycle && !editing && (
+              <div className="space-y-1.5">
+                <Label>Price (PHP)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={form.price}
+                  onChange={(e) => setForm({ ...form, price: e.target.value })}
+                  placeholder="0.00"
+                />
+              </div>
+            )}
+            {!isMotorcycle && editing && (
               <p className="text-xs text-muted-foreground">
-                Price is managed in the{" "}
+                Current price: {formatPHP(editing.price)}. To change it, use{" "}
                 <a href="/admin/prices" className="underline">
                   Price Management
                 </a>{" "}
-                module.
+                only.
               </p>
             )}
             <div className="space-y-1.5">
@@ -500,10 +557,13 @@ export const ProductManager = forwardRef<
               />
             </div>
           </div>
+          {formError && <p className="text-xs text-destructive">{formError}</p>}
           <DialogFooter>
             <Button
-              onClick={() => save.mutate()}
-              disabled={save.isPending || uploading || !form.name.trim()}
+              onClick={() => {
+                if (validateForm()) save.mutate();
+              }}
+              disabled={save.isPending || uploading}
             >
               {uploading ? "Uploading..." : editing ? "Update" : "Save item"}
             </Button>

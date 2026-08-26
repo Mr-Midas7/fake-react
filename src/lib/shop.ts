@@ -7,7 +7,8 @@ export const SHOP = {
   hours: "Monday to Saturday, 8:00 AM - 5:00 PM",
   phone: "0917 000 0000",
   email: "hello@fakerider.ph",
-  facebook: "https://facebook.com",
+  facebook: "https://www.facebook.com/profile.php?id=100082988659961",
+  messenger: "https://www.facebook.com/messages/t/101547759281909/",
   noticeHours: 48,
 };
 
@@ -77,6 +78,86 @@ export function shopTimeOptions() {
   return options;
 }
 
+const BOOKING_OPEN_MINUTES = 8 * 60;
+const BOOKING_CLOSE_MINUTES = 17 * 60;
+const BOOKING_INTERVAL_MINUTES = 30;
+
+export type BookingCapacityConfig = {
+  startTime: string;
+  capacity: number;
+};
+
+export type BookingTimeSlot = {
+  id: string;
+  startTime: string;
+  endTime: string;
+  capacity: number;
+};
+
+export function timeToMinutes(time: string) {
+  const [hours = Number.NaN, minutes = Number.NaN] = time.slice(0, 5).split(":").map(Number);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return Number.NaN;
+  return hours * 60 + minutes;
+}
+
+function minutesToTime(minutes: number) {
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+/** True for a 30-minute booking start within the 8 AM–5 PM operating window. */
+export function isBookingStartTime(time: string) {
+  const minutes = timeToMinutes(time);
+  return (
+    Number.isFinite(minutes) &&
+    minutes >= BOOKING_OPEN_MINUTES &&
+    minutes < BOOKING_CLOSE_MINUTES &&
+    (minutes - BOOKING_OPEN_MINUTES) % BOOKING_INTERVAL_MINUTES === 0
+  );
+}
+
+/** True for a valid Monday-Saturday Manila calendar date. */
+export function isShopOpenDate(dateIso: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateIso)) return false;
+  const [year = Number.NaN, month = Number.NaN, day = Number.NaN] = dateIso.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day &&
+    date.getUTCDay() !== 0
+  );
+}
+
+/**
+ * Build the public booking grid. The configured hourly slot capacity applies
+ * to both half-hour starts within that hour.
+ */
+export function buildBookingTimeSlots(config: BookingCapacityConfig[]): BookingTimeSlot[] {
+  const fallbackCapacity = Math.max(0, ...config.map((slot) => Number(slot.capacity) || 0));
+
+  return Array.from(
+    { length: (BOOKING_CLOSE_MINUTES - BOOKING_OPEN_MINUTES) / BOOKING_INTERVAL_MINUTES },
+    (_, index) => {
+      const startMinutes = BOOKING_OPEN_MINUTES + index * BOOKING_INTERVAL_MINUTES;
+      const startTime = minutesToTime(startMinutes);
+      const hourStart = minutesToTime(Math.floor(startMinutes / 60) * 60);
+      const configured = config.find((slot) => slot.startTime.slice(0, 5) === startTime);
+      const hourlyConfigured = config.find((slot) => slot.startTime.slice(0, 5) === hourStart);
+
+      return {
+        id: `booking-${startTime}`,
+        startTime,
+        endTime: minutesToTime(startMinutes + BOOKING_INTERVAL_MINUTES),
+        capacity: Number(configured?.capacity ?? hourlyConfigured?.capacity ?? fallbackCapacity),
+      };
+    },
+  );
+}
+
+export function intervalsOverlap(startA: number, endA: number, startB: number, endB: number) {
+  return startA < endB && endA > startB;
+}
+
 export function formatDateLong(iso: string) {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1)).toLocaleDateString("en-PH", {
@@ -138,10 +219,47 @@ export function decodeBlockReason(reason: string | null): {
   return { endTime: rest.slice(0, 5), userReason: rest.slice(pipeIdx + 1) };
 }
 
+export const PHONE_VALIDATION_MESSAGE = "Enter a valid 11-digit mobile number that starts with 09.";
+
+/** Keep the mobile-number field to its local 11-digit format while the user types. */
+export function sanitizePhilippineMobileInput(value: string) {
+  return value.replace(/\D/g, "").slice(0, 11);
+}
+
+/** Convert a stored or pasted Philippine mobile number to its local 09XXXXXXXXX form. */
+export function toLocalPhilippineMobile(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (/^639\d{9}$/.test(digits)) return `0${digits.slice(2)}`;
+  return sanitizePhilippineMobileInput(digits);
+}
+
+/** Convert a local 09XXXXXXXXX mobile number to the E.164 value stored in the database. */
+export function normalizePhilippineMobile(value: string): string | null {
+  const digits = sanitizePhilippineMobileInput(value);
+
+  if (/^09\d{9}$/.test(digits)) return `+63${digits.slice(1)}`;
+
+  return null;
+}
+
 export const phoneSchema = z
   .string()
   .trim()
-  .regex(/^(09\d{9}|\+639\d{9})$/, "Enter a valid PH mobile number (09XXXXXXXXX)");
+  .refine((value) => normalizePhilippineMobile(value) !== null, PHONE_VALIDATION_MESSAGE)
+  .transform((value) => normalizePhilippineMobile(value)!);
+
+export const REFERENCE_CODE_PATTERN = /^FRM-[A-Z0-9]{6}$/i;
+export const REFERENCE_CODE_VALIDATION_MESSAGE =
+  "Enter a valid reference code in the format FRM-XXXXXX.";
+
+/** Reference codes are case-insensitive; store and query them in one canonical form. */
+export function normalizeReferenceCode(value: string) {
+  return value.trim().toUpperCase();
+}
+
+export function isReferenceCode(value: string) {
+  return REFERENCE_CODE_PATTERN.test(normalizeReferenceCode(value));
+}
 
 /** Booking rule: the slot must start at least 48 hours from now (Manila). */
 export function isSlotBookable(dateIso: string, time: string) {

@@ -1,8 +1,9 @@
 import { Bike, ImageIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { formatPHP } from "@/lib/shop";
+import { formatPHP, SHOP } from "@/lib/shop";
 
 export type ProductRow = {
   id: string;
@@ -54,6 +55,17 @@ export function ProductCard({ product }: { product: ProductRow }) {
           <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{product.description}</p>
         )}
         <p className="mt-3 font-display text-xl text-primary">{formatPHP(product.price)}</p>
+        {product.in_stock ? (
+          <Button asChild variant="outline" size="sm" className="mt-4 w-full uppercase">
+            <a href={SHOP.messenger} target="_blank" rel="noopener noreferrer">
+              Reserve via Messenger
+            </a>
+          </Button>
+        ) : (
+          <p className="mt-4 text-xs text-muted-foreground">
+            Message us to check future availability.
+          </p>
+        )}
       </CardContent>
     </Card>
   );

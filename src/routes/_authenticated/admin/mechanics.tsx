@@ -34,6 +34,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  PHONE_VALIDATION_MESSAGE,
+  normalizePhilippineMobile,
+  sanitizePhilippineMobileInput,
+  toLocalPhilippineMobile,
+} from "@/lib/shop";
 
 export const Route = createFileRoute("/_authenticated/admin/mechanics")({
   component: MechanicsPage,
@@ -54,6 +60,7 @@ function MechanicsPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<CrewMember | null>(null);
   const [form, setForm] = useState({ ...blank });
+  const [formError, setFormError] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">("all");
   const [filterName, setFilterName] = useState("");
 
@@ -134,10 +141,17 @@ function MechanicsPage() {
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) {
-      toast.error("Name is required");
+    if (form.name.trim().length < 2) {
+      setFormError("Enter a mechanic name with at least 2 characters.");
+      toast.error("Enter a mechanic name with at least 2 characters.");
       return;
     }
+    if (form.phone && !normalizePhilippineMobile(form.phone)) {
+      setFormError(PHONE_VALIDATION_MESSAGE);
+      toast.error(PHONE_VALIDATION_MESSAGE);
+      return;
+    }
+    setFormError("");
     if (editing) {
       const { error } = await supabase
         .from("crew_members")
@@ -169,6 +183,7 @@ function MechanicsPage() {
             onClick={() => {
               setEditing(null);
               setForm({ ...blank });
+              setFormError("");
               setOpen(true);
             }}
           >
@@ -268,7 +283,12 @@ function MechanicsPage() {
                           variant="ghost"
                           onClick={() => {
                             setEditing(c);
-                            setForm({ name: c.name, role: c.role, phone: c.phone ?? "" });
+                            setForm({
+                              name: c.name,
+                              role: c.role,
+                              phone: c.phone ? toLocalPhilippineMobile(c.phone) : "",
+                            });
+                            setFormError("");
                             setOpen(true);
                           }}
                         >
@@ -309,23 +329,38 @@ function MechanicsPage() {
               <Label>Name</Label>
               <Input
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, name: e.target.value });
+                  setFormError("");
+                }}
               />
             </div>
             <div className="space-y-1.5">
               <Label>Role</Label>
               <Input
                 value={form.role}
-                onChange={(e) => setForm({ ...form, role: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, role: e.target.value });
+                  setFormError("");
+                }}
               />
             </div>
             <div className="space-y-1.5">
               <Label>Phone</Label>
               <Input
+                type="tel"
                 value={form.phone}
-                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                maxLength={11}
+                inputMode="numeric"
+                onChange={(e) => {
+                  setForm({ ...form, phone: sanitizePhilippineMobileInput(e.target.value) });
+                  setFormError("");
+                }}
+                placeholder="09171234567"
+                aria-invalid={formError === PHONE_VALIDATION_MESSAGE}
               />
             </div>
+            {formError && <p className="text-xs text-destructive">{formError}</p>}
           </div>
           <DialogFooter>
             <Button onClick={handleSave} disabled={add.isPending || !form.name.trim()}>

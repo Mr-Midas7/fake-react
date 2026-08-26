@@ -24,7 +24,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cancelAppointment, lookupAppointment } from "@/lib/booking.functions";
-import { formatDateLong, formatPHP, formatTime, statusLabel } from "@/lib/shop";
+import {
+  PHONE_VALIDATION_MESSAGE,
+  formatDateLong,
+  formatPHP,
+  formatTime,
+  isReferenceCode,
+  normalizePhilippineMobile,
+  normalizeReferenceCode,
+  sanitizePhilippineMobileInput,
+  statusLabel,
+} from "@/lib/shop";
 
 export const Route = createFileRoute("/my-appointment")({
   head: () => ({
@@ -53,13 +63,14 @@ function MyAppointment() {
   const cancel = useServerFn(cancelAppointment);
   const [reference, setReference] = useState("");
   const [phone, setPhone] = useState("");
+  const [errors, setErrors] = useState<{ reference?: string; phone?: string }>({});
   const [appt, setAppt] = useState<
     null | Extract<Awaited<ReturnType<typeof lookupAppointment>>, { ok: true }>["appointment"]
   >(null);
 
   const search = useMutation({
     mutationFn: () =>
-      lookup({ data: { reference: reference.trim().toUpperCase(), phone: phone.trim() } }),
+      lookup({ data: { reference: normalizeReferenceCode(reference), phone: phone.trim() } }),
     onSuccess: (res) => {
       if (!res.ok) {
         setAppt(null);
@@ -73,7 +84,7 @@ function MyAppointment() {
 
   const cancelMutation = useMutation({
     mutationFn: () =>
-      cancel({ data: { reference: reference.trim().toUpperCase(), phone: phone.trim() } }),
+      cancel({ data: { reference: normalizeReferenceCode(reference), phone: phone.trim() } }),
     onSuccess: (res) => {
       if (!res.ok) {
         toast.error(res.error);
@@ -84,6 +95,16 @@ function MyAppointment() {
     },
     onError: () => toast.error("We could not cancel the appointment. Please call the shop."),
   });
+
+  function validate() {
+    const nextErrors: { reference?: string; phone?: string } = {};
+    if (!isReferenceCode(reference)) {
+      nextErrors.reference = "Enter a valid reference code in the format FRM-XXXXXX.";
+    }
+    if (!normalizePhilippineMobile(phone)) nextErrors.phone = PHONE_VALIDATION_MESSAGE;
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }
 
   return (
     <div className="min-h-screen">
@@ -100,24 +121,46 @@ function MyAppointment() {
           className="mt-8 grid gap-4 rounded-xl border border-border/70 bg-card/50 p-6 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
           onSubmit={(e) => {
             e.preventDefault();
-            search.mutate();
+            if (validate()) search.mutate();
           }}
         >
           <div className="space-y-1.5">
             <Label>Reference code</Label>
             <Input
               value={reference}
-              onChange={(e) => setReference(e.target.value.toUpperCase())}
+              onChange={(e) => {
+                setReference(normalizeReferenceCode(e.target.value));
+                setErrors((current) => {
+                  const { reference: _, ...rest } = current;
+                  return rest;
+                });
+              }}
               placeholder="FRM-XXXXXX"
+              maxLength={10}
+              autoCapitalize="characters"
+              aria-invalid={!!errors.reference}
             />
+            {errors.reference && <p className="text-xs text-destructive">{errors.reference}</p>}
           </div>
           <div className="space-y-1.5">
             <Label>Mobile number</Label>
             <Input
+              type="tel"
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="09XXXXXXXXX"
+              maxLength={11}
+              inputMode="numeric"
+              autoComplete="tel"
+              onChange={(e) => {
+                setPhone(sanitizePhilippineMobileInput(e.target.value));
+                setErrors((current) => {
+                  const { phone: _, ...rest } = current;
+                  return rest;
+                });
+              }}
+              placeholder="09171234567"
+              aria-invalid={!!errors.phone}
             />
+            {errors.phone && <p className="text-xs text-destructive">{errors.phone}</p>}
           </div>
           <Button type="submit" disabled={search.isPending} className="font-display uppercase">
             {search.isPending ? <Loader2 className="animate-spin" /> : <Search />} Find
@@ -172,7 +215,7 @@ function MyAppointment() {
                 <p className="mt-4 text-sm text-muted-foreground">Notes: {appt.notes}</p>
               )}
 
-              {!["cancelled", "completed"].includes(appt.status) && (
+              {["pending", "confirmed"].includes(appt.status) && (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button variant="destructive" className="mt-6 font-display uppercase">

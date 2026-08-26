@@ -36,6 +36,7 @@ export type Database = {
       appointment_services: {
         Row: {
           appointment_id: string;
+          duration_minutes: number;
           id: string;
           price: number;
           service_id: string | null;
@@ -43,6 +44,7 @@ export type Database = {
         };
         Insert: {
           appointment_id: string;
+          duration_minutes?: number;
           id?: string;
           price?: number;
           service_id?: string | null;
@@ -50,6 +52,7 @@ export type Database = {
         };
         Update: {
           appointment_id?: string;
+          duration_minutes?: number;
           id?: string;
           price?: number;
           service_id?: string | null;
@@ -77,8 +80,10 @@ export type Database = {
           admin_notes: string | null;
           appointment_date: string;
           assigned_crew_id: string | null;
+          booking_request_id: string | null;
           cancelled_at: string | null;
           created_at: string;
+          booking_duration_minutes: number;
           customer_name: string;
           email: string | null;
           id: string;
@@ -101,8 +106,10 @@ export type Database = {
           admin_notes?: string | null;
           appointment_date: string;
           assigned_crew_id?: string | null;
+          booking_request_id?: string | null;
           cancelled_at?: string | null;
           created_at?: string;
+          booking_duration_minutes?: number;
           customer_name: string;
           email?: string | null;
           id?: string;
@@ -125,8 +132,10 @@ export type Database = {
           admin_notes?: string | null;
           appointment_date?: string;
           assigned_crew_id?: string | null;
+          booking_request_id?: string | null;
           cancelled_at?: string | null;
           created_at?: string;
+          booking_duration_minutes?: number;
           customer_name?: string;
           email?: string | null;
           id?: string;
@@ -162,6 +171,7 @@ export type Database = {
           reason: string | null;
           created_at: string;
           created_by: string | null;
+          is_archived: boolean;
         };
         Insert: {
           id?: string;
@@ -169,6 +179,7 @@ export type Database = {
           reason?: string | null;
           created_at?: string;
           created_by?: string | null;
+          is_archived?: boolean;
         };
         Update: {
           id?: string;
@@ -176,6 +187,7 @@ export type Database = {
           reason?: string | null;
           created_at?: string;
           created_by?: string | null;
+          is_archived?: boolean;
         };
         Relationships: [];
       };
@@ -547,6 +559,42 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      create_booking_atomic: {
+        Args: {
+          p_appointment_date: string;
+          p_assigned_crew_id: string | null;
+          p_booking_duration_minutes: number;
+          p_booking_request_id: string;
+          p_customer_name: string;
+          p_email: string | null;
+          p_moto_brand: string;
+          p_moto_model: string;
+          p_moto_variant: string | null;
+          p_moto_year: number;
+          p_notification_message: string;
+          p_notification_title: string;
+          p_notes: string | null;
+          p_phone: string;
+          p_plate_number: string;
+          p_reference_code: string;
+          p_services: Json;
+          p_start_time: string;
+          p_total_estimate: number;
+        };
+        Returns: {
+          appointment_id: string;
+          reference_code: string;
+        }[];
+      };
+      enforce_public_rate_limit: {
+        Args: {
+          p_limit: number;
+          p_scope: string;
+          p_subject: string;
+          p_window_seconds: number;
+        };
+        Returns: boolean;
+      };
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"];

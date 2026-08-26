@@ -31,6 +31,7 @@ function AuthPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -40,12 +41,23 @@ function AuthPage() {
 
   const signIn = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
+      });
       if (error) throw error;
     },
     onSuccess: () => navigate({ to: "/admin", replace: true }),
     onError: (e: Error) => toast.error(e.message || "Invalid email or password."),
   });
+
+  function validate() {
+    const nextErrors: { email?: string; password?: string } = {};
+    if (!/^\S+@\S+\.\S+$/.test(email.trim())) nextErrors.email = "Enter a valid email address.";
+    if (!password) nextErrors.password = "Enter your password.";
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
@@ -59,7 +71,7 @@ function AuthPage() {
             className="mt-6 space-y-4"
             onSubmit={(e) => {
               e.preventDefault();
-              signIn.mutate();
+              if (validate()) signIn.mutate();
             }}
           >
             <div className="space-y-1.5">
@@ -67,19 +79,35 @@ function AuthPage() {
               <Input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value.toLowerCase());
+                  setErrors((current) => {
+                    const { email: _, ...rest } = current;
+                    return rest;
+                  });
+                }}
                 placeholder="admin@fakerider.ph"
                 required
+                aria-invalid={!!errors.email}
               />
+              {errors.email && <p className="text-xs text-destructive">{errors.email}</p>}
             </div>
             <div className="space-y-1.5">
               <Label>Password</Label>
               <Input
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setErrors((current) => {
+                    const { password: _, ...rest } = current;
+                    return rest;
+                  });
+                }}
                 required
+                aria-invalid={!!errors.password}
               />
+              {errors.password && <p className="text-xs text-destructive">{errors.password}</p>}
             </div>
             <Button
               type="submit"

@@ -1,13 +1,15 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useSearch } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { CheckCircle2, Copy, Loader2, CalendarIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { CheckCircle2, Copy, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
+import { z } from "zod";
 
 import { SiteFooter } from "@/components/site/site-footer";
 import { SiteHeader } from "@/components/site/site-header";
+import { TurnstileChallenge } from "@/components/site/turnstile-challenge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -15,7 +17,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -25,18 +26,40 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  type Availability,
+  computeAvailableDates,
+  computeAvailableSlots,
+  computeFullyBookedDates,
+} from "@/lib/availability";
 import { createBooking, getAvailability } from "@/lib/booking.functions";
 import {
+  PHONE_VALIDATION_MESSAGE,
   SHOP,
-  addDays,
-  decodeBlockReason,
   formatDateLong,
   formatPHP,
   formatTime,
+  normalizePhilippineMobile,
+  sanitizePhilippineMobileInput,
 } from "@/lib/shop";
 import { cn } from "@/lib/utils";
 
+const searchSchema = z.object({
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  startTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}(:\d{2})?$/)
+    .optional(),
+  serviceId: z.string().uuid().optional(),
+});
+
+const turnstileEnabled = Boolean(import.meta.env["VITE_TURNSTILE_SITE_KEY"]);
+
 export const Route = createFileRoute("/book")({
+  validateSearch: searchSchema,
   head: () => ({
     meta: [
       { title: "Book a Service Appointment | Fake Rider Motorparts" },
@@ -71,6 +94,7 @@ type Errors = Partial<{
 function BookPage() {
   const book = useServerFn(createBooking);
   const availabilityFn = useServerFn(getAvailability);
+  const search = useSearch({ from: "/book" });
 
   const [form, setForm] = useState({
     customerName: "",
@@ -83,12 +107,17 @@ function BookPage() {
     plateNumber: "",
     notes: "",
   });
-  const [serviceIds, setServiceIds] = useState<string[]>([]);
-  const [date, setDate] = useState("");
-  const [startTime, setStartTime] = useState("");
+  const [serviceIds, setServiceIds] = useState<string[]>(
+    search.serviceId ? [search.serviceId] : [],
+  );
+  const [date, setDate] = useState<string>(search.date ?? "");
+  const [startTime, setStartTime] = useState<string>(search.startTime ?? "");
   const [terms, setTerms] = useState(false);
+  const [useManualMotorcycle, setUseManualMotorcycle] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
   const [result, setResult] = useState<{ reference: string; total: number } | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const [bookingRequestId, setBookingRequestId] = useState(() => crypto.randomUUID());
 
   const services = useQuery({
     queryKey: ["services"],
@@ -124,6 +153,10 @@ function BookPage() {
     return Array.from(set).sort();
   }, [motorcycleCatalog.data]);
 
+  const catalogUnavailable =
+    motorcycleCatalog.isError || (!motorcycleCatalog.isLoading && brands.length === 0);
+  const enterMotorcycleManually = useManualMotorcycle || catalogUnavailable;
+
   const modelsForBrand = useMemo(() => {
     const seen = new Set<string>();
     const list = (motorcycleCatalog.data ?? []).filter((p) => p.brand === form.motoBrand);
@@ -139,122 +172,54 @@ function BookPage() {
       }));
   }, [motorcycleCatalog.data, form.motoBrand]);
 
-  const availability = useQuery({
+  const availability = useQuery<Availability>({
     queryKey: ["availability", serviceIds],
     queryFn: () => availabilityFn({ data: { days: 45, serviceIds } }),
     enabled: serviceIds.length > 0,
   });
 
-  const dates = useMemo(() => {
-    if (!availability.data) return [];
-    const out: string[] = [];
-    let cursor = availability.data.from;
-    while (cursor <= availability.data.to) {
-      const [y, m, d] = cursor.split("-").map(Number);
-      const dow = new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1)).getUTCDay();
-      const fullDayBlocked = availability.data.blocks.some(
-        (b) => b.date === cursor && !b.startTime,
-      );
-      if (dow !== 0 && !fullDayBlocked) out.push(cursor);
-      cursor = addDays(cursor, 1);
-    }
-    return out;
-  }, [availability.data]);
+  const dates = useMemo(
+    () => (availability.data ? computeAvailableDates(availability.data) : []),
+    [availability.data],
+  );
 
-  const slots = useMemo(() => {
-    if (!availability.data || !date) return [];
-    const totalDuration = availability.data.totalDurationMinutes ?? 90;
-    const [dy, dm, dd] = date.split("-").map(Number);
-    const dow = new Date(Date.UTC(dy ?? 1970, (dm ?? 1) - 1, dd ?? 1)).getUTCDay();
-
-    return availability.data.slots.map((slot) => {
-      const slotStartMin =
-        parseInt(slot.startTime.slice(0, 2)) * 60 + parseInt(slot.startTime.slice(3, 5));
-      const slotEndMin = slotStartMin + totalDuration;
-
-      const blocked = availability.data.blocks.some((b) => {
-        if (b.date !== date) return false;
-        if (!b.startTime) return true; // whole-day block
-        if (b.startTime === slot.startTime) return true; // exact slot match
-        if (!b.endTime) return false; // single-slot block that doesn't match
-        // Custom range: check overlap
-        const bsMin = parseInt(b.startTime.slice(0, 2)) * 60 + parseInt(b.startTime.slice(3, 5));
-        const beMin = parseInt(b.endTime.slice(0, 2)) * 60 + parseInt(b.endTime.slice(3, 5));
-        return slotStartMin < beMin && slotEndMin > bsMin;
-      });
-
-      let availableMechanics = 0;
-
-      // Get date-specific schedules (override weekly), then fall back to weekly
-      const allSchedules = availability.data.schedules ?? [];
-      const dateSchedules = allSchedules.filter((s) => s.schedule_date === date && s.is_working);
-      const weeklySchedules = allSchedules.filter(
-        (s) => s.day_of_week === dow && s.is_working && !s.schedule_date,
-      );
-
-      // Deduplicate by crew_id, preferring date-specific schedules
-      const crewSchedMap = new Map<string, unknown>();
-      for (const s of [...dateSchedules, ...weeklySchedules]) {
-        const crewId = (s as { crew_id: string }).crew_id;
-        if (!crewSchedMap.has(crewId)) crewSchedMap.set(crewId, s);
-      }
-      const daySchedules = Array.from(crewSchedMap.values()) as Array<{
-        crew_id: string;
-        start_time: string;
-        end_time: string;
-      }>;
-
-      const dateExceptions = (availability.data.exceptions ?? []).filter((e) => {
-        const sd = new Date(e.start_date);
-        const ed = new Date(e.end_date);
-        const target = new Date(date);
-        return sd <= target && ed >= target;
-      });
-
-      for (const sched of daySchedules) {
-        const shiftStart = String(sched.start_time).slice(0, 5);
-        const shiftEnd = String(sched.end_time).slice(0, 5);
-        const shiftStartMin =
-          parseInt(shiftStart.slice(0, 2)) * 60 + parseInt(shiftStart.slice(3, 5));
-        const shiftEndMin = parseInt(shiftEnd.slice(0, 2)) * 60 + parseInt(shiftEnd.slice(3, 5));
-
-        if (slotStartMin < shiftStartMin || slotEndMin > shiftEndMin) continue;
-
-        const hasException = dateExceptions.some((e) => {
-          if (e.crew_id !== sched.crew_id) return false;
-          if (e.is_all_day) return true;
-          if (e.start_time && e.end_time) {
-            const excStart = String(e.start_time).slice(0, 5);
-            const excEnd = String(e.end_time).slice(0, 5);
-            const excStartMin =
-              parseInt(excStart.slice(0, 2)) * 60 + parseInt(excStart.slice(3, 5));
-            const excEndMin = parseInt(excEnd.slice(0, 2)) * 60 + parseInt(excEnd.slice(3, 5));
-            if (slotStartMin < excEndMin && slotEndMin > excStartMin) return true;
-          }
-          return false;
-        });
-
-        if (hasException) continue;
-
-        availableMechanics++;
-      }
-
-      const disabled = blocked || availableMechanics === 0;
-
-      return {
-        ...slot,
-        remaining: availableMechanics,
-        disabled,
-      };
-    });
-  }, [availability.data, date]);
+  const slots = useMemo(
+    () => (availability.data && date ? computeAvailableSlots(availability.data, date) : []),
+    [availability.data, date],
+  );
 
   const availableDateSet = useMemo(() => new Set(dates), [dates]);
+  const fullyBookedDates = useMemo(
+    () => (availability.data ? computeFullyBookedDates(availability.data) : []),
+    [availability.data],
+  );
 
   const selectedDate = date ? parseISO(date) : undefined;
+  const availabilityError = availability.data?.error;
 
   const selectedServices = (services.data ?? []).filter((s) => serviceIds.includes(s.id));
   const total = selectedServices.reduce((sum, s) => sum + Number(s.price), 0);
+  const totalDuration = selectedServices.reduce(
+    (sum, service) => sum + (service.duration_minutes ?? 60) + 15,
+    0,
+  );
+
+  useEffect(() => {
+    if (!availability.data || !date) return;
+
+    if (!availableDateSet.has(date)) {
+      setDate("");
+      setStartTime("");
+      return;
+    }
+
+    if (startTime) {
+      const selectedSlot = computeAvailableSlots(availability.data, date).find(
+        (slot) => slot.startTime === startTime,
+      );
+      if (!selectedSlot || selectedSlot.disabled) setStartTime("");
+    }
+  }, [availability.data, availableDateSet, date, startTime]);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -272,6 +237,8 @@ function BookPage() {
           date,
           startTime,
           notes: form.notes.trim(),
+          turnstileToken,
+          idempotencyKey: bookingRequestId,
           termsAccepted: true as const,
         },
       });
@@ -280,6 +247,8 @@ function BookPage() {
     onSuccess: (res) => {
       if (!res.ok) {
         toast.error(res.error);
+        setTurnstileToken("");
+        setBookingRequestId(crypto.randomUUID());
         availability.refetch();
         return;
       }
@@ -304,8 +273,7 @@ function BookPage() {
   function validate() {
     const e: Errors = {};
     if (form.customerName.trim().length < 2) e.customerName = "Please enter your full name.";
-    if (!/^(09\d{9}|\+639\d{9})$/.test(form.phone.trim()))
-      e.phone = "Use a valid PH mobile number (09XXXXXXXXX).";
+    if (!normalizePhilippineMobile(form.phone)) e.phone = PHONE_VALIDATION_MESSAGE;
     if (form.email.trim() && !/^\S+@\S+\.\S+$/.test(form.email.trim()))
       e.email = "Enter a valid email address.";
     if (!form.motoBrand.trim()) e.motoBrand = "Required";
@@ -411,10 +379,15 @@ function BookPage() {
               </Field>
               <Field label="Mobile number" error={errors.phone}>
                 <Input
+                  type="tel"
                   value={form.phone}
-                  maxLength={13}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, "") })}
-                  placeholder="09XXXXXXXXX"
+                  maxLength={11}
+                  inputMode="tel"
+                  autoComplete="tel"
+                  onChange={(e) => {
+                    setForm({ ...form, phone: sanitizePhilippineMobileInput(e.target.value) });
+                  }}
+                  placeholder="09171234567"
                 />
               </Field>
               <Field label="Email (optional)" error={errors.email}>
@@ -430,44 +403,83 @@ function BookPage() {
 
           <Section title="2. Motorcycle details">
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              <Field label="Brand" error={errors.motoBrand}>
-                <Select
-                  value={form.motoBrand}
-                  onValueChange={(v) => setForm({ ...form, motoBrand: v, motoModel: "" })}
-                  disabled={motorcycleCatalog.isLoading || brands.length === 0}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a brand" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {brands.map((b) => (
-                      <SelectItem key={b} value={b}>
-                        {b}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Model" error={errors.motoModel}>
-                <Select
-                  value={form.motoModel}
-                  onValueChange={(v) => setForm({ ...form, motoModel: v })}
-                  disabled={!form.motoBrand || modelsForBrand.length === 0}
-                >
-                  <SelectTrigger>
-                    <SelectValue
-                      placeholder={form.motoBrand ? "Select a model" : "Select a brand first"}
+              <div className="md:col-span-2 lg:col-span-3">
+                {catalogUnavailable ? (
+                  <p className="text-sm text-muted-foreground">
+                    The motorcycle catalog is unavailable, so please enter your unit details below.
+                  </p>
+                ) : (
+                  <label className="flex items-center gap-3 text-sm">
+                    <Checkbox
+                      checked={useManualMotorcycle}
+                      onCheckedChange={(value) => setUseManualMotorcycle(value === true)}
                     />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {modelsForBrand.map((m) => (
-                      <SelectItem key={m.value} value={m.value}>
-                        {m.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
+                    <span>My motorcycle isn&apos;t listed</span>
+                  </label>
+                )}
+              </div>
+
+              {enterMotorcycleManually ? (
+                <>
+                  <Field label="Brand" error={errors.motoBrand}>
+                    <Input
+                      value={form.motoBrand}
+                      maxLength={50}
+                      onChange={(e) => setForm({ ...form, motoBrand: e.target.value })}
+                      placeholder="e.g. Yamaha"
+                    />
+                  </Field>
+                  <Field label="Model" error={errors.motoModel}>
+                    <Input
+                      value={form.motoModel}
+                      maxLength={50}
+                      onChange={(e) => setForm({ ...form, motoModel: e.target.value })}
+                      placeholder="e.g. NMAX 155"
+                    />
+                  </Field>
+                </>
+              ) : (
+                <>
+                  <Field label="Brand" error={errors.motoBrand}>
+                    <Select
+                      value={form.motoBrand}
+                      onValueChange={(v) => setForm({ ...form, motoBrand: v, motoModel: "" })}
+                      disabled={motorcycleCatalog.isLoading}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a brand" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {brands.map((b) => (
+                          <SelectItem key={b} value={b}>
+                            {b}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label="Model" error={errors.motoModel}>
+                    <Select
+                      value={form.motoModel}
+                      onValueChange={(v) => setForm({ ...form, motoModel: v })}
+                      disabled={!form.motoBrand || modelsForBrand.length === 0}
+                    >
+                      <SelectTrigger>
+                        <SelectValue
+                          placeholder={form.motoBrand ? "Select a model" : "Select a brand first"}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {modelsForBrand.map((m) => (
+                          <SelectItem key={m.value} value={m.value}>
+                            {m.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </>
+              )}
               <Field label="Version / variant (optional)">
                 <Input
                   value={form.motoVariant}
@@ -508,11 +520,13 @@ function BookPage() {
                   <button
                     type="button"
                     key={s.id}
-                    onClick={() =>
+                    onClick={() => {
                       setServiceIds((prev) =>
                         checked ? prev.filter((id) => id !== s.id) : [...prev, s.id],
-                      )
-                    }
+                      );
+                      setDate("");
+                      setStartTime("");
+                    }}
                     className={cn(
                       "flex items-start justify-between gap-3 rounded-lg border p-4 text-left transition-colors",
                       checked
@@ -531,57 +545,74 @@ function BookPage() {
                 );
               })}
             </div>
+            {selectedServices.length > 0 && (
+              <p className="mt-3 text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  {totalDuration} minutes reserved
+                </span>{" "}
+                including a 15-minute buffer for each selected service.
+              </p>
+            )}
           </Section>
 
           <Section title="4. Pick a schedule" error={errors.schedule}>
-            {availability.isLoading ? (
+            {serviceIds.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Select at least one service first so we can calculate available dates and times.
+              </p>
+            ) : availability.isLoading ? (
               <p className="text-sm text-muted-foreground">Loading available schedules...</p>
+            ) : availability.isError || availabilityError ? (
+              <p className="text-sm text-destructive">
+                {availabilityError ??
+                  "We could not load availability. Please refresh and try again."}
+              </p>
             ) : (
               <>
                 <p className="mb-2 text-sm text-muted-foreground">
-                  Available dates (Monday to Saturday)
+                  Available dates (Monday to Saturday). Dates with no remaining mechanic capacity
+                  are marked Fully Booked.
                 </p>
 
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className="w-full justify-start text-left font-normal"
-                      disabled={!dates.length}
-                    >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {date ? format(parseISO(date), "PPPP") : "Pick a date"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={selectedDate}
-                      onSelect={(d) => {
-                        if (!d) return;
-                        const iso = format(d, "yyyy-MM-dd");
-                        setDate(iso);
-                        setStartTime("");
-                      }}
-                      disabled={(d) => {
-                        const iso = format(d, "yyyy-MM-dd");
-                        return !availableDateSet.has(iso);
-                      }}
-                      classNames={{
-                        nav: "justify-between gap-1",
-                        month_caption:
-                          "flex h-(--cell-size) w-full items-center justify-center px-(--cell-size)",
-                      }}
-                      initialFocus
-                    />
-                  </PopoverContent>
-                </Popover>
+                <div className="w-full overflow-x-auto rounded-lg border border-border bg-card/50 p-2">
+                  <Calendar
+                    mode="single"
+                    selected={selectedDate}
+                    onSelect={(d) => {
+                      if (!d) return;
+                      const iso = format(d, "yyyy-MM-dd");
+                      setDate(iso);
+                      setStartTime("");
+                    }}
+                    disabled={(d) => {
+                      const iso = format(d, "yyyy-MM-dd");
+                      return !availableDateSet.has(iso);
+                    }}
+                    modifiers={{ fullyBooked: fullyBookedDates.map((value) => parseISO(value)) }}
+                    modifiersClassNames={{
+                      fullyBooked: "bg-destructive/15 text-destructive line-through opacity-100",
+                    }}
+                    classNames={{
+                      nav: "justify-between gap-1",
+                      month_caption:
+                        "flex h-(--cell-size) w-full items-center justify-center px-(--cell-size)",
+                    }}
+                  />
+                </div>
+                {fullyBookedDates.length > 0 && (
+                  <p className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="h-3 w-3 rounded-sm bg-destructive/15 ring-1 ring-destructive/40" />
+                    Fully Booked dates cannot be selected.
+                  </p>
+                )}
 
-                {date && (
-                  <>
-                    <p className="mt-4 mb-2 text-sm text-muted-foreground">
-                      Time slots for {formatDateLong(date)}
-                    </p>
+                <div className="mt-4">
+                  <p className="mb-2 text-sm text-muted-foreground">
+                    {date
+                      ? `Time slots for ${formatDateLong(date)}`
+                      : "Choose a date above to view available time slots."}
+                  </p>
+                  {date ? (
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                       {slots.map((slot) => (
                         <button
@@ -600,14 +631,24 @@ function BookPage() {
                           <span className="font-display block">{formatTime(slot.startTime)}</span>
                           <span className="block text-[11px] text-muted-foreground">
                             {slot.disabled
-                              ? "unavailable"
-                              : `${slot.remaining} mechanic(s) available`}
+                              ? slot.notBookable
+                                ? "past booking cutoff"
+                                : slot.remaining === 0
+                                  ? "unavailable"
+                                  : "full"
+                              : slot.recommended
+                                ? `Recommended · ${slot.remaining} mechanic(s) available`
+                                : `${slot.remaining} mechanic(s) available`}
                           </span>
                         </button>
                       ))}
                     </div>
-                  </>
-                )}
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+                      Time slots will appear here after you choose a date.
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </Section>
@@ -637,6 +678,11 @@ function BookPage() {
                   Cancellations must be made at least {SHOP.noticeHours} hours before the schedule.
                 </li>
                 <li>The shop is not liable for personal items left on the unit.</li>
+                <li>
+                  We use your name, contact details, motorcycle details, selected services, and
+                  notes only to manage this booking, contact you about it, and provide shop
+                  services. We do not sell your information.
+                </li>
               </ul>
             </div>
             <label className="mt-4 flex items-start gap-3 text-sm">
@@ -645,8 +691,12 @@ function BookPage() {
                 onCheckedChange={(v) => setTerms(v === true)}
                 className="mt-0.5"
               />
-              <span>I have read and accept the terms and conditions.</span>
+              <span>
+                I accept the terms and conditions and consent to the collection and use of my
+                booking information as described above.
+              </span>
             </label>
+            <TurnstileChallenge resetKey={bookingRequestId} onToken={setTurnstileToken} />
           </Section>
 
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card/60 p-5">
@@ -664,11 +714,14 @@ function BookPage() {
                   ))}
                 </div>
               )}
+              <p className="mt-2 text-xs text-muted-foreground">
+                Final availability is checked again when you confirm your booking.
+              </p>
             </div>
             <Button
               type="submit"
               size="lg"
-              disabled={mutation.isPending}
+              disabled={mutation.isPending || (turnstileEnabled && !turnstileToken)}
               className="font-display tracking-wide uppercase"
             >
               {mutation.isPending && <Loader2 className="animate-spin" />} Confirm booking

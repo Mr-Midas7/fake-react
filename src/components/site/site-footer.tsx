@@ -7,7 +7,7 @@ import { SHOP } from "@/lib/shop";
 export function SiteFooter() {
   return (
     <footer className="mt-20 border-t border-border/70 bg-card/40">
-      <div className="mx-auto grid w-full max-w-7xl gap-10 px-4 py-12 md:grid-cols-3">
+      <div className="site-container grid gap-10 py-12 md:grid-cols-3">
         <div>
           <img
             src={logo.url}
@@ -62,7 +62,7 @@ export function SiteFooter() {
               Services & prices
             </Link>
             <Link to="/shop" className="hover:text-foreground">
-              Parts, accessories & units
+              Parts & Accessories
             </Link>
             <Link to="/auth" className="hover:text-foreground">
               Staff login

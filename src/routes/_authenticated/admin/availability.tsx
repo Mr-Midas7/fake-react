@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Loader2, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/page-header";
@@ -68,7 +68,7 @@ type WorkingMechanic = {
   role: string;
   start_time: string | null;
   end_time: string | null;
-  is_date_override: boolean;
+  is_date_assignment: boolean;
 };
 
 type CrewMember = {
@@ -77,11 +77,18 @@ type CrewMember = {
   role: string;
 };
 
+function dateToKey(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function AvailabilityPage() {
   const qc = useQueryClient();
   const [viewDate, setViewDate] = useState<Date | undefined>(undefined);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [assignDate, setAssignDate] = useState<Date | undefined>(undefined);
+  const [assignDates, setAssignDates] = useState<Date[]>([]);
   const [assignMechanic, setAssignMechanic] = useState<string>("");
   const [assignShift, setAssignShift] = useState("whole-day");
   const [customStart, setCustomStart] = useState("");
@@ -116,47 +123,39 @@ function AvailabilityPage() {
     },
   });
 
-  const dateSchedules = useQuery({
-    queryKey: ["crew-schedules-dates"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("crew_schedules")
-        .select("*")
-        .not("schedule_date", "is", null);
-      if (error) throw error;
-      return data ?? [];
-    },
-  });
-
   const saveSchedule = useMutation({
     mutationFn: async (payload: {
       crew_id: string;
-      schedule_date: string;
+      schedule_dates: string[];
       start_time: string;
       end_time: string;
       is_working: boolean;
       note?: string;
     }) => {
-      const [y, m, d] = payload.schedule_date.split("-").map(Number);
-      const dow = new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1)).getUTCDay();
       const { error } = await supabase.from("crew_schedules").upsert(
-        {
-          crew_id: payload.crew_id,
-          schedule_date: payload.schedule_date,
-          day_of_week: dow,
-          start_time: payload.is_working ? `${payload.start_time}:00` : null,
-          end_time: payload.is_working ? `${payload.end_time}:00` : null,
-          is_working: payload.is_working,
-          note: payload.note || null,
-        },
-        { onConflict: "crew_id,schedule_date" },
+        payload.schedule_dates.map((scheduleDate) => {
+          const [y, m, d] = scheduleDate.split("-").map(Number);
+          return {
+            crew_id: payload.crew_id,
+            schedule_date: scheduleDate,
+            day_of_week: new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1)).getUTCDay(),
+            start_time: payload.is_working ? `${payload.start_time}:00` : null,
+            end_time: payload.is_working ? `${payload.end_time}:00` : null,
+            is_working: payload.is_working,
+            note: payload.note || null,
+          };
+        }),
+        { onConflict: "crew_id,schedule_date", ignoreDuplicates: true },
       );
       if (error) throw error;
     },
-    onSuccess: () => {
-      toast.success("Schedule saved");
+    onSuccess: (_, payload) => {
+      toast.success(
+        payload.schedule_dates.length === 1
+          ? "Working day scheduled"
+          : `${payload.schedule_dates.length} working days scheduled`,
+      );
       qc.invalidateQueries({ queryKey: ["crew-schedules-all"] });
-      qc.invalidateQueries({ queryKey: ["crew-schedules-dates"] });
     },
     onError: (err: Error) => {
       const msg = err.message.toLowerCase();
@@ -181,7 +180,6 @@ function AvailabilityPage() {
     onSuccess: () => {
       toast.success("Schedule removed");
       qc.invalidateQueries({ queryKey: ["crew-schedules-all"] });
-      qc.invalidateQueries({ queryKey: ["crew-schedules-dates"] });
     },
     onError: (err: Error) => {
       const msg = err.message.toLowerCase();
@@ -194,51 +192,37 @@ function AvailabilityPage() {
     },
   });
 
-  // Get all mechanics working on a given date (date-specific overrides + weekly)
-  const getWorkingMechanicsForDate = (dateStr: string) => {
-    const [dy, dm, dd] = dateStr.split("-").map(Number);
-    const dow = new Date(Date.UTC(dy ?? 1970, (dm ?? 1) - 1, dd ?? 1)).getUTCDay();
-    const allSchedules = schedules.data ?? [];
-    const crewMap = new Map((crew.data ?? []).map((c) => [c.id, c]));
+  // Show assignments that were explicitly made for the selected date.
+  const getWorkingMechanicsForDate = useCallback(
+    (dateStr: string) => {
+      const allSchedules = schedules.data ?? [];
+      const crewMap = new Map((crew.data ?? []).map((c) => [c.id, c]));
 
-    // Combine date-specific and weekly recurring schedules, preferring date-specific overrides
-    const relevant = allSchedules
-      .filter(
-        (s) =>
-          s.is_working &&
-          (s.schedule_date === dateStr || (s.day_of_week === dow && !s.schedule_date)),
-      )
-      .sort((a, b) => {
-        if (a.schedule_date && !b.schedule_date) return -1;
-        if (!a.schedule_date && b.schedule_date) return 1;
-        return 0;
-      });
+      const relevant = allSchedules.filter(
+        (schedule) => schedule.schedule_date === dateStr && schedule.is_working,
+      );
 
-    // Deduplicate by crew_id, keeping the date-specific entry when both exist
-    const seen = new Set<string>();
-    const result: WorkingMechanic[] = [];
-    for (const s of relevant) {
-      if (seen.has(s.crew_id)) continue;
-      seen.add(s.crew_id);
-      result.push({
-        id: s.id,
-        name: s.crew_members?.name ?? crewMap.get(s.crew_id)?.name ?? "Unknown",
-        role: s.crew_members?.role ?? "Mechanic",
-        start_time: s.start_time ? String(s.start_time).slice(0, 5) : null,
-        end_time: s.end_time ? String(s.end_time).slice(0, 5) : null,
-        is_date_override: !!s.schedule_date,
-      });
-    }
-    return result;
-  };
+      // Legacy duplicate rows should not make a mechanic appear twice.
+      const seen = new Set<string>();
+      const result: WorkingMechanic[] = [];
+      for (const s of relevant) {
+        if (seen.has(s.crew_id)) continue;
+        seen.add(s.crew_id);
+        result.push({
+          id: s.id,
+          name: s.crew_members?.name ?? crewMap.get(s.crew_id)?.name ?? "Unknown",
+          role: s.crew_members?.role ?? "Mechanic",
+          start_time: s.start_time ? String(s.start_time).slice(0, 5) : null,
+          end_time: s.end_time ? String(s.end_time).slice(0, 5) : null,
+          is_date_assignment: true,
+        });
+      }
+      return result;
+    },
+    [crew.data, schedules.data],
+  );
 
-  const assignDateStr = useMemo(() => {
-    if (!assignDate) return null;
-    const y = assignDate.getFullYear();
-    const m = String(assignDate.getMonth() + 1).padStart(2, "0");
-    const d = String(assignDate.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  }, [assignDate]);
+  const assignDateStrs = useMemo(() => assignDates.map(dateToKey), [assignDates]);
 
   const viewDateStr = useMemo(() => {
     if (!viewDate) return null;
@@ -251,21 +235,27 @@ function AvailabilityPage() {
   const dayInfo = useMemo(() => {
     if (!viewDateStr) return null;
     return getWorkingMechanicsForDate(viewDateStr);
-  }, [viewDateStr, schedules.data, crew.data]);
+  }, [viewDateStr, getWorkingMechanicsForDate]);
 
   const handleSave = async () => {
-    if (!assignMechanic || !assignDateStr) {
-      toast.error("Please select a date and mechanic");
+    if (!assignMechanic || assignDateStrs.length === 0) {
+      toast.error("Please select at least one working day and a mechanic");
       return;
     }
 
-    const alreadyAssigned = (schedules.data ?? []).some(
-      (s) => s.crew_id === assignMechanic && s.schedule_date === assignDateStr,
+    const existingDates = new Set(
+      (schedules.data ?? [])
+        .filter((schedule) => schedule.crew_id === assignMechanic && schedule.schedule_date)
+        .map((schedule) => schedule.schedule_date),
     );
-    if (alreadyAssigned) {
-      toast.error("The mechanic has already been assigned that day");
+    const newDateStrs = assignDateStrs.filter((date) => !existingDates.has(date));
+
+    if (newDateStrs.length === 0) {
+      toast.error("The mechanic is already assigned on each selected day");
       return;
     }
+
+    const skippedDays = assignDateStrs.length - newDateStrs.length;
 
     let startTime: string;
     let endTime: string;
@@ -290,16 +280,22 @@ function AvailabilityPage() {
     try {
       await saveSchedule.mutateAsync({
         crew_id: assignMechanic,
-        schedule_date: assignDateStr,
+        schedule_dates: newDateStrs,
         start_time: startTime,
         end_time: endTime,
         is_working: true,
       });
       setAssignMechanic("");
+      setAssignDates([]);
       setAssignShift("whole-day");
       setCustomStart("");
       setCustomEnd("");
       setDialogOpen(false);
+      if (skippedDays > 0) {
+        toast.info(
+          `${skippedDays} ${skippedDays === 1 ? "day was" : "days were"} already assigned and left unchanged`,
+        );
+      }
     } catch {
       // Error already surfaced via mutation's onError toast
     }
@@ -309,7 +305,7 @@ function AvailabilityPage() {
     <div>
       <PageHeader
         title="Crew Scheduling"
-        description="View crew schedules and assign crew to specific dates."
+        description="View and manage crew assignments for specific dates."
         action={
           <Button
             className="font-display uppercase"
@@ -318,7 +314,7 @@ function AvailabilityPage() {
               setAssignShift("whole-day");
               setCustomStart("");
               setCustomEnd("");
-              setAssignDate(undefined);
+              setAssignDates([]);
               setDialogOpen(true);
             }}
           >
@@ -336,7 +332,7 @@ function AvailabilityPage() {
         </CardHeader>
         <CardContent className="p-4">
           <p className="mb-4 text-sm text-muted-foreground">
-            Click a day to view crew working that day.
+            Click a day to view the crew assigned to that date.
           </p>
 
           <div className="grid gap-2 md:grid-cols-[300px_1fr]">
@@ -375,13 +371,13 @@ function AvailabilityPage() {
                                     : "-"}
                                 </TableCell>
                                 <TableCell className="text-right">
-                                  {w.is_date_override && (
+                                  {w.is_date_assignment && (
                                     <button
                                       type="button"
                                       onClick={() => deleteSchedule.mutate(w.id)}
                                       className="rounded px-2 py-1 text-xs text-destructive hover:underline"
                                     >
-                                      Remove override
+                                      Remove assignment
                                     </button>
                                   )}
                                 </TableCell>
@@ -396,7 +392,7 @@ function AvailabilityPage() {
               ) : (
                 <div className="flex min-h-[120px] w-full items-center justify-center">
                   <p className="text-sm text-muted-foreground">
-                    Click a day to view crew working that day.
+                    Click a day to view the crew assigned to that date.
                   </p>
                 </div>
               )}
@@ -429,11 +425,11 @@ function AvailabilityPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label>Date</Label>
+              <Label>Working days</Label>
               <Calendar
-                mode="single"
-                selected={assignDate}
-                onSelect={setAssignDate}
+                mode="multiple"
+                selected={assignDates}
+                onSelect={(dates) => setAssignDates(dates ?? [])}
                 className="border-border/70"
                 classNames={{
                   months: "w-full",
@@ -444,6 +440,11 @@ function AvailabilityPage() {
                     "flex h-(--cell-size) w-full items-center justify-center px-(--cell-size)",
                 }}
               />
+              <p className="text-xs text-muted-foreground">
+                {assignDateStrs.length === 0
+                  ? "Choose one or more days for this crew member."
+                  : `${assignDateStrs.length} ${assignDateStrs.length === 1 ? "day" : "days"} selected.`}
+              </p>
             </div>
 
             <div className="space-y-1.5">
@@ -528,13 +529,13 @@ function AvailabilityPage() {
               onClick={handleSave}
               disabled={
                 !assignMechanic ||
-                !assignDateStr ||
+                assignDateStrs.length === 0 ||
                 (assignShift === "custom" && (!customStart || !customEnd)) ||
                 saveSchedule.isPending
               }
             >
               {saveSchedule.isPending && <Loader2 className="animate-spin" />}
-              Save schedule
+              Save working days
             </Button>
           </DialogFooter>
         </DialogContent>

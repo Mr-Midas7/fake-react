@@ -2,10 +2,18 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Download, FileText } from "lucide-react";
 import { useState } from "react";
-import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable";
 
 import { PageHeader } from "@/components/admin/page-header";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -35,6 +43,7 @@ function ReportsPage() {
   const today = manilaNow().date;
   const [from, setFrom] = useState(addDays(today, -30));
   const [to, setTo] = useState(today);
+  const [pendingExport, setPendingExport] = useState<"csv" | "pdf" | null>(null);
 
   const data = useQuery({
     queryKey: ["reports", from, to],
@@ -126,7 +135,11 @@ function ReportsPage() {
     URL.revokeObjectURL(url);
   }
 
-  function exportPdf() {
+  async function exportPdf() {
+    const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+      import("jspdf"),
+      import("jspdf-autotable"),
+    ]);
     const doc = new jsPDF();
 
     doc.setFontSize(16);
@@ -162,6 +175,12 @@ function ReportsPage() {
     doc.save(`fake-rider-report-${from}-to-${to}.pdf`);
   }
 
+  async function confirmExport() {
+    if (pendingExport === "csv") exportCsv();
+    if (pendingExport === "pdf") await exportPdf();
+    setPendingExport(null);
+  }
+
   return (
     <div>
       <PageHeader
@@ -175,11 +194,11 @@ function ReportsPage() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={exportCsv}>
+              <DropdownMenuItem onSelect={() => setPendingExport("csv")}>
                 <Download className="mr-2 h-4 w-4" />
                 Export CSV
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={exportPdf}>
+              <DropdownMenuItem onSelect={() => setPendingExport("pdf")}>
                 <FileText className="mr-2 h-4 w-4" />
                 Export PDF
               </DropdownMenuItem>
@@ -293,6 +312,30 @@ function ReportsPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={pendingExport !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingExport(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm report export</AlertDialogTitle>
+            <AlertDialogDescription>
+              Export {appts.length} {appts.length === 1 ? "booking" : "bookings"} from{" "}
+              {formatDateLong(from)} to {formatDateLong(to)} as a {pendingExport?.toUpperCase()}{" "}
+              file?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmExport}>
+              Export {pendingExport?.toUpperCase()}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

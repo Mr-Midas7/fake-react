@@ -45,7 +45,7 @@ function ShopPage() {
         .from("products")
         .select("*")
         .eq("is_active", true)
-        .neq("category", "motorcycle")
+        .in("category", ["part", "accessory"])
         .order("sort_order");
       if (error) throw error;
       return Array.from(new Map((data ?? []).map((p) => [p.name.trim(), p])).values());
@@ -64,14 +64,14 @@ function ShopPage() {
   return (
     <div className="min-h-screen">
       <SiteHeader />
-      <main className="mx-auto w-full max-w-7xl px-4 py-12">
+      <main className="site-container py-12">
         <p className="text-xs tracking-[0.3em] text-accent uppercase">Shop showcase</p>
         <h1 className="font-display text-4xl font-bold uppercase md:text-5xl">
           Parts & Accessories
         </h1>
         <p className="mt-2 max-w-2xl text-muted-foreground">
           Everything we stock in the garage. Prices are in Philippine peso and may change without
-          prior notice &mdash; message us to reserve an item.
+          prior notice &mdash; use Reserve via Messenger on an item card to ask the shop to hold it.
         </p>
 
         <div className="mt-8 flex flex-wrap items-center justify-between gap-4">

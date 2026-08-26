@@ -13,6 +13,7 @@ import {
 import famImage from "@/assets/fam-image.jpg?url";
 import logo from "@/assets/logo-shp.png.asset.json";
 import { ProductCard } from "@/components/site/product-card";
+import { QuickSchedule } from "@/components/site/quick-schedule";
 import { SiteFooter } from "@/components/site/site-footer";
 import { SiteHeader } from "@/components/site/site-header";
 import { Badge } from "@/components/ui/badge";
@@ -78,7 +79,7 @@ function Home() {
 
       <main>
         <section className="relative overflow-hidden">
-          <div className="mx-auto grid w-full max-w-7xl items-center gap-10 px-4 py-16 md:grid-cols-2 md:py-24">
+          <div className="site-container grid items-center gap-10 py-16 md:grid-cols-2 md:py-24">
             <div>
               <Badge className="mb-4 bg-accent/15 text-accent uppercase" variant="outline">
                 Local Pit Stop &middot; Philippines
@@ -130,7 +131,7 @@ function Home() {
         </section>
 
         <section className="border-y border-border/70 bg-card/40">
-          <div className="mx-auto grid w-full max-w-7xl gap-4 px-4 py-8 sm:grid-cols-3">
+          <div className="site-container grid gap-4 py-8 sm:grid-cols-3">
             <InfoTile
               icon={<MapPin className="h-5 w-5 text-primary" />}
               title="Shop location"
@@ -150,7 +151,7 @@ function Home() {
           </div>
         </section>
 
-        <section className="mx-auto w-full max-w-7xl px-4 py-16">
+        <section className="site-container py-16">
           <SectionHeading
             eyebrow="Shop showcase"
             title="Featured parts & accessories"
@@ -175,7 +176,7 @@ function Home() {
         </section>
 
         <section className="border-y border-border/70 bg-card/30">
-          <div className="mx-auto w-full max-w-7xl px-4 py-16">
+          <div className="site-container py-16">
             <SectionHeading
               eyebrow="Service menu"
               title="What our pit crew can do"
@@ -206,7 +207,9 @@ function Home() {
           </div>
         </section>
 
-        <section className="mx-auto grid w-full max-w-7xl items-center gap-10 px-4 py-16 md:grid-cols-2">
+        <QuickSchedule />
+
+        <section className="site-container grid items-center gap-10 py-16 md:grid-cols-2">
           <img
             src={famImage}
             alt="The Fake Rider Motorparts riding family at a local motocross event"
