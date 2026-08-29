@@ -110,9 +110,11 @@ function BookPage() {
   const [serviceIds, setServiceIds] = useState<string[]>(
     search.serviceId ? [search.serviceId] : [],
   );
+  const [serviceCategory, setServiceCategory] = useState("all");
   const [date, setDate] = useState<string>(search.date ?? "");
   const [startTime, setStartTime] = useState<string>(search.startTime ?? "");
   const [terms, setTerms] = useState(false);
+  const [mobileStep, setMobileStep] = useState(1);
   const [useManualMotorcycle, setUseManualMotorcycle] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
   const [result, setResult] = useState<{ reference: string; total: number } | null>(null);
@@ -198,6 +200,16 @@ function BookPage() {
   const availabilityError = availability.data?.error;
 
   const selectedServices = (services.data ?? []).filter((s) => serviceIds.includes(s.id));
+  const serviceCategories = useMemo(
+    () =>
+      Array.from(
+        new Set((services.data ?? []).map((service) => service.category).filter(Boolean)),
+      ).sort(),
+    [services.data],
+  );
+  const filteredServices = (services.data ?? []).filter(
+    (service) => serviceCategory === "all" || service.category === serviceCategory,
+  );
   const total = selectedServices.reduce((sum, s) => sum + Number(s.price), 0);
   const totalDuration = selectedServices.reduce(
     (sum, service) => sum + (service.duration_minutes ?? 60) + 15,
@@ -270,22 +282,54 @@ function BookPage() {
     },
   });
 
-  function validate() {
+  function validationErrors(steps: number[]) {
     const e: Errors = {};
-    if (form.customerName.trim().length < 2) e.customerName = "Please enter your full name.";
-    if (!normalizePhilippineMobile(form.phone)) e.phone = PHONE_VALIDATION_MESSAGE;
-    if (form.email.trim() && !/^\S+@\S+\.\S+$/.test(form.email.trim()))
-      e.email = "Enter a valid email address.";
-    if (!form.motoBrand.trim()) e.motoBrand = "Required";
-    if (!form.motoModel.trim()) e.motoModel = "Required";
-    const year = Number(form.motoYear);
-    if (!year || year < 1970 || year > new Date().getFullYear()) e.motoYear = "Enter a valid year";
-    if (form.plateNumber.trim().length < 2) e.plateNumber = "Required";
-    if (serviceIds.length === 0) e.services = "Select at least one service.";
-    if (!date || !startTime) e.schedule = "Pick a date and time slot.";
-    if (!terms) e.terms = "You must accept the terms and conditions.";
+    if (steps.includes(1)) {
+      if (form.customerName.trim().length < 2) e.customerName = "Please enter your full name.";
+      if (!normalizePhilippineMobile(form.phone)) e.phone = PHONE_VALIDATION_MESSAGE;
+      if (form.email.trim() && !/^\S+@\S+\.\S+$/.test(form.email.trim()))
+        e.email = "Enter a valid email address.";
+    }
+    if (steps.includes(2)) {
+      if (!form.motoBrand.trim()) e.motoBrand = "Required";
+      if (!form.motoModel.trim()) e.motoModel = "Required";
+      const year = Number(form.motoYear);
+      if (!year || year < 1970 || year > new Date().getFullYear())
+        e.motoYear = "Enter a valid year";
+      if (form.plateNumber.trim().length < 2) e.plateNumber = "Required";
+    }
+    if (steps.includes(3) && serviceIds.length === 0) e.services = "Select at least one service.";
+    if (steps.includes(4) && (!date || !startTime)) e.schedule = "Pick a date and time slot.";
+    if (steps.includes(5) && !terms) e.terms = "You must accept the terms and conditions.";
+    return e;
+  }
+
+  function validate() {
+    const e = validationErrors([1, 2, 3, 4, 5]);
     setErrors(e);
     return Object.keys(e).length === 0;
+  }
+
+  function continueMobileBooking() {
+    const e = validationErrors([mobileStep]);
+    setErrors(e);
+    if (Object.keys(e).length > 0) {
+      toast.error("Please complete the highlighted fields.");
+      return;
+    }
+    setMobileStep((step) => Math.min(step + 1, 6));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function goBackMobileBooking() {
+    setErrors({});
+    setMobileStep((step) => Math.max(step - 1, 1));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function submitBooking() {
+    if (validate()) mutation.mutate();
+    else toast.error("Please complete the highlighted fields.");
   }
 
   if (result) {
@@ -354,15 +398,42 @@ function BookPage() {
           Schedule your service online. Walk-ins are accommodated depending on the queue.
         </p>
 
+        <div className="mt-6 md:hidden">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Step {mobileStep} of 6</span>
+            <span>
+              {
+                [
+                  "Your details",
+                  "Motorcycle details",
+                  "Select services",
+                  "Pick a schedule",
+                  "Terms",
+                  "Review",
+                ][mobileStep - 1]
+              }
+            </span>
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-200"
+              style={{ width: `${(mobileStep / 6) * 100}%` }}
+            />
+          </div>
+        </div>
+
         <form
           className="mt-10 space-y-8"
           onSubmit={(e) => {
             e.preventDefault();
-            if (validate()) mutation.mutate();
-            else toast.error("Please complete the highlighted fields.");
+            if (window.matchMedia("(min-width: 768px)").matches || mobileStep === 6) {
+              submitBooking();
+            } else {
+              continueMobileBooking();
+            }
           }}
         >
-          <Section title="1. Your details">
+          <Section title="1. Your details" className={cn(mobileStep !== 1 && "hidden", "md:block")}>
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Full name" error={errors.customerName}>
                 <Input
@@ -399,9 +470,13 @@ function BookPage() {
                 />
               </Field>
             </div>
+            <WizardActions onContinue={continueMobileBooking} />
           </Section>
 
-          <Section title="2. Motorcycle details">
+          <Section
+            title="2. Motorcycle details"
+            className={cn(mobileStep !== 2 && "hidden", "md:block")}
+          >
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               <div className="md:col-span-2 lg:col-span-3">
                 {catalogUnavailable ? (
@@ -510,11 +585,32 @@ function BookPage() {
                 />
               </Field>
             </div>
+            <WizardActions onBack={goBackMobileBooking} onContinue={continueMobileBooking} />
           </Section>
 
-          <Section title="3. Select services" error={errors.services}>
+          <Section
+            title="3. Select services"
+            error={errors.services}
+            className={cn(mobileStep !== 3 && "hidden", "md:block")}
+          >
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <Label htmlFor="booking-service-category">Service category</Label>
+              <Select value={serviceCategory} onValueChange={setServiceCategory}>
+                <SelectTrigger id="booking-service-category" className="w-full sm:w-52">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All categories</SelectItem>
+                  {serviceCategories.map((category) => (
+                    <SelectItem key={category} value={category} className="capitalize">
+                      {category.replace(/[-_]/g, " ")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="grid gap-3 md:grid-cols-2">
-              {services.data?.map((s) => {
+              {filteredServices.map((s) => {
                 const checked = serviceIds.includes(s.id);
                 return (
                   <button
@@ -545,6 +641,21 @@ function BookPage() {
                 );
               })}
             </div>
+            {filteredServices.length === 0 && (
+              <p className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+                No services are available in this category.
+              </p>
+            )}
+            <p className="mt-3 text-sm text-muted-foreground">
+              Not sure which service to choose?{" "}
+              <Link
+                to="/services"
+                className="font-medium text-primary underline underline-offset-4"
+              >
+                Browse our services
+              </Link>{" "}
+              for details to understand what each service includes.
+            </p>
             {selectedServices.length > 0 && (
               <p className="mt-3 text-sm text-muted-foreground">
                 <span className="font-medium text-foreground">
@@ -553,9 +664,14 @@ function BookPage() {
                 including a 15-minute buffer for each selected service.
               </p>
             )}
+            <WizardActions onBack={goBackMobileBooking} onContinue={continueMobileBooking} />
           </Section>
 
-          <Section title="4. Pick a schedule" error={errors.schedule}>
+          <Section
+            title="4. Pick a schedule"
+            error={errors.schedule}
+            className={cn(mobileStep !== 4 && "hidden", "md:block")}
+          >
             {serviceIds.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 Select at least one service first so we can calculate available dates and times.
@@ -630,15 +746,7 @@ function BookPage() {
                         >
                           <span className="font-display block">{formatTime(slot.startTime)}</span>
                           <span className="block text-[11px] text-muted-foreground">
-                            {slot.disabled
-                              ? slot.notBookable
-                                ? "past booking cutoff"
-                                : slot.remaining === 0
-                                  ? "unavailable"
-                                  : "full"
-                              : slot.recommended
-                                ? `Recommended · ${slot.remaining} mechanic(s) available`
-                                : `${slot.remaining} mechanic(s) available`}
+                            {slot.disabled ? "Unavailable" : "Available"}
                           </span>
                         </button>
                       ))}
@@ -651,9 +759,14 @@ function BookPage() {
                 </div>
               </>
             )}
+            <WizardActions onBack={goBackMobileBooking} onContinue={continueMobileBooking} />
           </Section>
 
-          <Section title="5. Notes & terms" error={errors.terms}>
+          <Section
+            title="5. Terms and conditions"
+            error={errors.terms}
+            className={cn(mobileStep !== 5 && "hidden", "md:block")}
+          >
             <Textarea
               value={form.notes}
               maxLength={500}
@@ -696,10 +809,15 @@ function BookPage() {
                 booking information as described above.
               </span>
             </label>
-            <TurnstileChallenge resetKey={bookingRequestId} onToken={setTurnstileToken} />
+            <WizardActions onBack={goBackMobileBooking} onContinue={continueMobileBooking} />
           </Section>
 
-          <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card/60 p-5">
+          <div
+            className={cn(
+              "hidden flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card/60 p-5 md:flex",
+              mobileStep === 6 && "flex",
+            )}
+          >
             <div>
               <p className="text-xs tracking-widest text-muted-foreground uppercase">
                 Estimated total
@@ -718,14 +836,27 @@ function BookPage() {
                 Final availability is checked again when you confirm your booking.
               </p>
             </div>
-            <Button
-              type="submit"
-              size="lg"
-              disabled={mutation.isPending || (turnstileEnabled && !turnstileToken)}
-              className="font-display tracking-wide uppercase"
-            >
-              {mutation.isPending && <Loader2 className="animate-spin" />} Confirm booking
-            </Button>
+            <div className="w-full space-y-4 md:w-auto">
+              <TurnstileChallenge resetKey={bookingRequestId} onToken={setTurnstileToken} />
+              <div className="flex justify-between gap-3 md:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="md:hidden"
+                  onClick={goBackMobileBooking}
+                >
+                  Back
+                </Button>
+                <Button
+                  type="submit"
+                  size="lg"
+                  disabled={mutation.isPending || (turnstileEnabled && !turnstileToken)}
+                  className="font-display tracking-wide uppercase"
+                >
+                  {mutation.isPending && <Loader2 className="animate-spin" />} Confirm booking
+                </Button>
+              </div>
+            </div>
           </div>
         </form>
       </main>
@@ -737,18 +868,37 @@ function BookPage() {
 function Section({
   title,
   error,
+  className,
   children,
 }: {
   title: string;
   error?: string | undefined;
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-border/70 bg-card/40 p-6">
+    <section className={cn("rounded-xl border border-border/70 bg-card/40 p-6", className)}>
       <h2 className="font-display mb-4 text-xl tracking-wide uppercase">{title}</h2>
       {children}
       {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
     </section>
+  );
+}
+
+function WizardActions({ onBack, onContinue }: { onBack?: () => void; onContinue: () => void }) {
+  return (
+    <div className="mt-6 flex justify-between gap-3 md:hidden">
+      {onBack ? (
+        <Button type="button" variant="outline" onClick={onBack}>
+          Back
+        </Button>
+      ) : (
+        <span />
+      )}
+      <Button type="button" onClick={onContinue} className="font-display uppercase">
+        Continue
+      </Button>
+    </div>
   );
 }
 

@@ -12,6 +12,17 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { Toaster } from "@/components/ui/sonner";
 
+const themeInitScript = `(() => {
+  try {
+    const saved = localStorage.getItem("fake-rider-theme");
+    const theme = saved === "light" || saved === "dark"
+      ? saved
+      : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    document.documentElement.style.colorScheme = theme;
+  } catch {}
+})();`;
+
 function NotFoundComponent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -114,6 +125,7 @@ function RootShell({ children }: { children: ReactNode }) {
     <html lang="en">
       <head>
         <HeadContent />
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body>
         {children}

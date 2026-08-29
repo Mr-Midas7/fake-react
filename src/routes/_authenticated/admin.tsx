@@ -19,6 +19,7 @@ import {
 import { useEffect } from "react";
 
 import logo from "@/assets/logo-shp.png.asset.json";
+import { ThemeToggle } from "@/components/site/theme-toggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -184,6 +185,7 @@ function AdminLayout() {
             <Link to="/" className="text-xs text-muted-foreground uppercase hover:text-foreground">
               View public site
             </Link>
+            <ThemeToggle />
             <div className="ml-auto flex items-center gap-3">
               <Link to="/admin/notifications" className="relative">
                 <Bell className="h-5 w-5 text-muted-foreground" />

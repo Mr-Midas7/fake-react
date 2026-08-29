@@ -1,17 +1,6 @@
--- A client-generated request ID makes a retry safe when a booking succeeds but
--- its response is lost. Each ID may create at most one appointment.
-ALTER TABLE public.appointments
-  ADD COLUMN IF NOT EXISTS booking_request_id uuid;
-
-CREATE UNIQUE INDEX IF NOT EXISTS appointments_booking_request_id_unique
-  ON public.appointments (booking_request_id)
-  WHERE booking_request_id IS NOT NULL;
-
-DROP FUNCTION IF EXISTS public.create_booking_atomic(
-  text, text, text, text, text, text, text, integer, text, date, time, text,
-  numeric, integer, uuid, jsonb, text, text
-);
-
+-- The function's OUT column name `reference_code` is also a column on
+-- appointments. Qualify every reference so PostgreSQL does not treat it as an
+-- ambiguous PL/pgSQL variable during a final booking write.
 CREATE OR REPLACE FUNCTION public.create_booking_atomic(
   p_reference_code text,
   p_booking_request_id uuid,
@@ -50,7 +39,7 @@ BEGIN
     RAISE EXCEPTION 'A booking must include at least one service.';
   END IF;
 
-  INSERT INTO public.appointments (
+  INSERT INTO public.appointments AS appointments (
     reference_code,
     booking_request_id,
     customer_name,
@@ -102,8 +91,6 @@ BEGIN
       RETURN;
     END IF;
 
-    -- The conflict belongs to capacity or a rare reference-code collision,
-    -- not this request ID. Preserve the app's existing retryable response.
     RAISE EXCEPTION 'The requested schedule is no longer available.' USING ERRCODE = '23P01';
   END IF;
 

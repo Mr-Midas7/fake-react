@@ -106,12 +106,14 @@ async function hashRateLimitSubject(subject: string) {
  * Persistent, per-endpoint limits. The database function serializes increments,
  * so this also works when the app runs across multiple serverless instances.
  */
-async function isPublicRequestAllowed(
+type RateLimitResult = "allowed" | "limited" | "unavailable";
+
+async function checkPublicRequestRateLimit(
   scope: "availability" | "booking" | "lookup" | "cancellation",
   maxRequests: number,
   windowSeconds: number,
   subject?: string,
-) {
+): Promise<RateLimitResult> {
   try {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const subjects = [await hashRateLimitSubject(`ip:${getClientIp()}`)];
@@ -126,14 +128,14 @@ async function isPublicRequestAllowed(
       });
       if (error) {
         console.error(`[Rate limit] ${scope} check failed`, error);
-        return false;
+        return "unavailable";
       }
-      if (data !== true) return false;
+      if (data !== true) return "limited";
     }
-    return true;
+    return "allowed";
   } catch (error) {
     console.error(`[Rate limit] ${scope} check failed`, error);
-    return false;
+    return "unavailable";
   }
 }
 
@@ -181,11 +183,19 @@ export const getAvailability = createServerFn({ method: "GET" })
     }
     const { supabaseAdmin } = supabaseModule;
 
-    if (!(await isPublicRequestAllowed("availability", 60, 60))) {
+    const availabilityRateLimit = await checkPublicRequestRateLimit("availability", 60, 60);
+    if (availabilityRateLimit === "limited") {
       return unavailableAvailability(
         from,
         to,
         "Too many availability checks. Please try again shortly.",
+      );
+    }
+    // Availability is read-only. A rate-limit infrastructure issue must not
+    // prevent a customer from selecting a service and seeing schedules.
+    if (availabilityRateLimit === "unavailable") {
+      console.warn(
+        "[Rate limit] availability protection unavailable; continuing with read-only lookup",
       );
     }
 
@@ -335,10 +345,14 @@ export const createBooking = createServerFn({ method: "POST" })
       };
     }
 
-    if (!(await isPublicRequestAllowed("booking", 5, 15 * 60, data.phone))) {
+    const bookingRateLimit = await checkPublicRequestRateLimit("booking", 5, 15 * 60, data.phone);
+    if (bookingRateLimit !== "allowed") {
       return {
         ok: false as const,
-        error: "Too many booking attempts. Please wait a few minutes before trying again.",
+        error:
+          bookingRateLimit === "limited"
+            ? "Too many booking attempts. Please wait a few minutes before trying again."
+            : "Booking protection is temporarily unavailable. Please try again shortly.",
       };
     }
 
@@ -635,7 +649,27 @@ export const createBooking = createServerFn({ method: "POST" })
       };
     }
 
-    if (inserted.error || !inserted.data) {
+    if (inserted.error) {
+      console.error("[Booking] atomic database write failed", {
+        code: inserted.error.code,
+        message: inserted.error.message,
+        details: inserted.error.details,
+        hint: inserted.error.hint,
+      });
+      if (
+        /PGRST202|create_booking_atomic|function .* does not exist/i.test(inserted.error.message)
+      ) {
+        return {
+          ok: false as const,
+          error:
+            "Booking setup is incomplete. The shop needs to apply its booking database update.",
+        };
+      }
+      return { ok: false as const, error: "We could not save your booking. Please try again." };
+    }
+
+    if (!inserted.data) {
+      console.error("[Booking] atomic database write returned no result");
       return { ok: false as const, error: "We could not save your booking. Please try again." };
     }
 
@@ -667,10 +701,14 @@ async function findAppointment(reference: string, phone: string) {
 export const lookupAppointment = createServerFn({ method: "POST" })
   .validator((input: unknown) => lookupSchema.parse(input))
   .handler(async ({ data }) => {
-    if (!(await isPublicRequestAllowed("lookup", 12, 10 * 60, data.phone))) {
+    const lookupRateLimit = await checkPublicRequestRateLimit("lookup", 12, 10 * 60, data.phone);
+    if (lookupRateLimit !== "allowed") {
       return {
         ok: false as const,
-        error: "Too many lookup attempts. Please wait a few minutes before trying again.",
+        error:
+          lookupRateLimit === "limited"
+            ? "Too many lookup attempts. Please wait a few minutes before trying again."
+            : "Appointment lookup is temporarily unavailable. Please try again shortly.",
       };
     }
 
@@ -706,10 +744,19 @@ export const lookupAppointment = createServerFn({ method: "POST" })
 export const cancelAppointment = createServerFn({ method: "POST" })
   .validator((input: unknown) => lookupSchema.parse(input))
   .handler(async ({ data }) => {
-    if (!(await isPublicRequestAllowed("cancellation", 3, 15 * 60, data.phone))) {
+    const cancellationRateLimit = await checkPublicRequestRateLimit(
+      "cancellation",
+      3,
+      15 * 60,
+      data.phone,
+    );
+    if (cancellationRateLimit !== "allowed") {
       return {
         ok: false as const,
-        error: "Too many cancellation attempts. Please wait a few minutes before trying again.",
+        error:
+          cancellationRateLimit === "limited"
+            ? "Too many cancellation attempts. Please wait a few minutes before trying again."
+            : "Appointment cancellation is temporarily unavailable. Please try again shortly.",
       };
     }
 

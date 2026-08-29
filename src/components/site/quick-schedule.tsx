@@ -261,15 +261,7 @@ function QuickTimeSlot({
     >
       <span className="font-display block">{formatTime(slot.startTime)}</span>
       <span className="block text-[11px] text-muted-foreground">
-        {slot.disabled
-          ? slot.notBookable
-            ? "past booking cutoff"
-            : slot.remaining === 0
-              ? "unavailable"
-              : "full"
-          : slot.recommended
-            ? `Recommended · ${slot.remaining} mechanic(s) available`
-            : `${slot.remaining} mechanic(s) available`}
+        {slot.disabled ? "Unavailable" : "Available"}
       </span>
     </button>
   );

@@ -1,15 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Archive } from "lucide-react";
+import { Archive, CalendarDays } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { format } from "date-fns";
 
 import { PageHeader } from "@/components/admin/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -50,6 +53,8 @@ function AppointmentsPage() {
   const [status, setStatus] = useState("all");
   const [term, setTerm] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
+  const [appointmentDate, setAppointmentDate] = useState<Date | undefined>();
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const focusedAppointmentId = search.appointmentId;
 
   const appointments = useQuery({
@@ -126,6 +131,7 @@ function AppointmentsPage() {
     if (focusedAppointmentId) return a.id === focusedAppointmentId;
     return (
       (status === "all" || a.status === status) &&
+      (!appointmentDate || a.appointment_date === format(appointmentDate, "yyyy-MM-dd")) &&
       (term.trim() === "" ||
         `${a.reference_code} ${a.customer_name} ${a.phone} ${a.plate_number}`
           .toLowerCase()
@@ -164,6 +170,48 @@ function AppointmentsPage() {
             ))}
           </SelectContent>
         </Select>
+        <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant={appointmentDate ? "secondary" : "outline"}
+              size="icon"
+              aria-label="Filter appointments by date"
+              title={
+                appointmentDate
+                  ? `Showing ${formatDateLong(format(appointmentDate, "yyyy-MM-dd"))}`
+                  : "Filter by date"
+              }
+            >
+              <CalendarDays className="h-4 w-4" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-2" align="start">
+            <Calendar
+              mode="single"
+              selected={appointmentDate}
+              onSelect={(selected) => {
+                if (!selected) return;
+                setAppointmentDate(selected);
+                setCalendarOpen(false);
+              }}
+            />
+            {appointmentDate && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="mt-1 w-full"
+                onClick={() => {
+                  setAppointmentDate(undefined);
+                  setCalendarOpen(false);
+                }}
+              >
+                Clear date filter
+              </Button>
+            )}
+          </PopoverContent>
+        </Popover>
         {focusedAppointmentId && (
           <Button
             variant="outline"

@@ -3,6 +3,7 @@ import { Menu } from "lucide-react";
 import { useState } from "react";
 
 import logo from "@/assets/logo-shp.png.asset.json";
+import { ThemeToggle } from "@/components/site/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +46,7 @@ export function SiteHeader() {
               {l.label}
             </Link>
           ))}
+          <ThemeToggle className="ml-1" />
           <Button asChild className="ml-2 font-display tracking-wide uppercase">
             <Link to="/book">Book Now</Link>
           </Button>
@@ -80,6 +82,7 @@ export function SiteHeader() {
               Book Now
             </Link>
           </Button>
+          <ThemeToggle showLabel className="mt-2 w-full justify-start" />
         </nav>
       </div>
       <div className="checker-strip h-[6px] w-full opacity-20" />

@@ -147,6 +147,8 @@ export const ProductManager = forwardRef<
     ).sort();
   }, [items.data]);
 
+  const brandOptions = isMotorcycle ? distinctBrands : distinctBrandsForItems;
+
   const filteredItems = useMemo(() => {
     if (!items.data) return [];
     let result = items.data;
@@ -435,11 +437,25 @@ export const ProductManager = forwardRef<
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Brand</Label>
+              <Label htmlFor={`product-brand-${category}`}>Brand</Label>
               <Input
+                id={`product-brand-${category}`}
+                list={`product-brand-options-${category}`}
                 value={form.brand}
-                onChange={(e) => setForm({ ...form, brand: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, brand: e.target.value });
+                  setFormError("");
+                }}
+                placeholder="Select or enter a brand"
               />
+              <datalist id={`product-brand-options-${category}`}>
+                {brandOptions.map((brand) => (
+                  <option key={brand} value={brand} />
+                ))}
+              </datalist>
+              <p className="text-xs text-muted-foreground">
+                Select an existing brand or enter a new one.
+              </p>
             </div>
             {!isMotorcycle && (
               <div className="space-y-3">

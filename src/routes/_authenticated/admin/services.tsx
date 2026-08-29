@@ -51,7 +51,14 @@ type Service = {
   category: string;
 };
 
-const blank = { name: "", description: "", price: "", duration_minutes: "60", is_active: true };
+const blank = {
+  name: "",
+  category: "general",
+  description: "",
+  price: "",
+  duration_minutes: "60",
+  is_active: true,
+};
 
 function ServicesAdmin() {
   const qc = useQueryClient();
@@ -83,6 +90,7 @@ function ServicesAdmin() {
     mutationFn: async () => {
       const payload = {
         name: form.name.trim(),
+        category: form.category.trim().toLowerCase(),
         description: form.description.trim() || null,
         duration_minutes: Number(form.duration_minutes) || 60,
         is_active: form.is_active,
@@ -123,6 +131,10 @@ function ServicesAdmin() {
   function validateForm() {
     if (form.name.trim().length < 2) {
       setFormError("Enter a service name with at least 2 characters.");
+      return false;
+    }
+    if (form.category.trim().length < 2) {
+      setFormError("Enter a service category with at least 2 characters.");
       return false;
     }
     const duration = Number(form.duration_minutes);
@@ -253,6 +265,7 @@ function ServicesAdmin() {
                           setEditing(s);
                           setForm({
                             name: s.name,
+                            category: s.category,
                             description: s.description ?? "",
                             price: String(s.price),
                             duration_minutes: String(s.duration_minutes),
@@ -292,6 +305,27 @@ function ServicesAdmin() {
                   setFormError("");
                 }}
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="service-category">Category</Label>
+              <Input
+                id="service-category"
+                list="service-category-options"
+                value={form.category}
+                onChange={(e) => {
+                  setForm({ ...form, category: e.target.value });
+                  setFormError("");
+                }}
+                placeholder="e.g. maintenance"
+              />
+              <datalist id="service-category-options">
+                {distinctCategories.map((category) => (
+                  <option key={category} value={category} />
+                ))}
+              </datalist>
+              <p className="text-xs text-muted-foreground">
+                Select an existing category or enter a new one.
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label>Duration (minutes)</Label>
