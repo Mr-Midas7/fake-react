@@ -8,6 +8,17 @@ export default defineConfig({
   resolve: {
     tsconfigPaths: true,
   },
+  environments: {
+    ssr: {
+      build: {
+        rollupOptions: {
+          output: {
+            inlineDynamicImports: true,
+          },
+        },
+      },
+    },
+  },
   plugins: [
     tanstackStart({
       server: { entry: "server" },
