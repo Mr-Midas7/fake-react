@@ -48,6 +48,7 @@ type Service = {
   price: number | string;
   duration_minutes: number;
   is_active: boolean;
+  is_archived: boolean;
   category: string;
 };
 
@@ -67,7 +68,6 @@ function ServicesAdmin() {
   const [form, setForm] = useState({ ...blank });
   const [formError, setFormError] = useState("");
   const [filterCategory, setFilterCategory] = useState<string>("");
-  const [filterStatus, setFilterStatus] = useState<"all" | "active" | "hidden">("all");
   const hasValidNewPrice =
     editing !== null ||
     (form.price.trim() !== "" && Number.isFinite(Number(form.price)) && Number(form.price) >= 0);
@@ -75,7 +75,11 @@ function ServicesAdmin() {
   const services = useQuery({
     queryKey: ["admin-services"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("services").select("*").order("sort_order");
+      const { data, error } = await supabase
+        .from("services")
+        .select("*")
+        .eq("is_archived", false)
+        .order("sort_order");
       if (error) throw error;
       return Array.from(new Map((data ?? []).map((s) => [s.name.trim(), s])).values()) as Service[];
     },
@@ -117,10 +121,13 @@ function ServicesAdmin() {
 
   const archive = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("services").update({ is_active: false }).eq("id", id);
+      const { error } = await supabase.from("services").update({ is_archived: true }).eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => {
+    onSuccess: (_, id) => {
+      qc.setQueryData<Service[]>(["admin-services"], (items) =>
+        items?.filter((service) => service.id !== id),
+      );
       toast.success("Service archived");
       qc.invalidateQueries({ queryKey: ["admin-services"], exact: false });
       qc.invalidateQueries({ queryKey: ["archived-services"], exact: false });
@@ -188,30 +195,12 @@ function ServicesAdmin() {
           </Select>
         </div>
 
-        <div className="space-y-1.5">
-          <Label className="text-sm">Status</Label>
-          <Select
-            value={filterStatus}
-            onValueChange={(v) => setFilterStatus(v as "all" | "active" | "hidden")}
-          >
-            <SelectTrigger className="w-full sm:w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All status</SelectItem>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="hidden">Hidden</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {(filterCategory || filterStatus !== "all") && (
+        {filterCategory && (
           <Button
             size="sm"
             variant="ghost"
             onClick={() => {
               setFilterCategory("");
-              setFilterStatus("all");
             }}
           >
             Clear
@@ -234,13 +223,7 @@ function ServicesAdmin() {
             </TableHeader>
             <TableBody>
               {services.data
-                ?.filter(
-                  (s) =>
-                    (!filterCategory || s.category === filterCategory) &&
-                    (filterStatus === "all" ||
-                      (filterStatus === "active" && s.is_active) ||
-                      (filterStatus === "hidden" && !s.is_active)),
-                )
+                ?.filter((s) => !filterCategory || s.category === filterCategory)
                 .map((s) => (
                   <TableRow key={s.id}>
                     <TableCell>
@@ -254,7 +237,7 @@ function ServicesAdmin() {
                     <TableCell className="text-sm text-primary">{formatPHP(s.price)}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className="uppercase">
-                        {s.is_active ? "Active" : "Hidden"}
+                        {s.is_active ? "Active" : "Deactivated"}
                       </Badge>
                     </TableCell>
                     <TableCell className="space-x-1 text-right">

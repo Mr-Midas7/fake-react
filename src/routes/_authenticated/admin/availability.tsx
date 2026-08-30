@@ -101,6 +101,7 @@ function AvailabilityPage() {
         .from("crew_members")
         .select("*")
         .eq("is_active", true)
+        .eq("is_archived", false)
         .order("name");
       if (error) throw error;
       return Array.from(

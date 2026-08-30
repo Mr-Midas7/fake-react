@@ -61,7 +61,7 @@ function ArchivePage() {
       const { data, error } = await supabase
         .from("services")
         .select("*")
-        .eq("is_active", false)
+        .eq("is_archived", true)
         .order("sort_order");
       if (error) throw error;
       return Array.from(new Map((data ?? []).map((s) => [s.name.trim(), s])).values());
@@ -75,7 +75,7 @@ function ArchivePage() {
         .from("products")
         .select("*")
         .in("category", ["part", "accessory"])
-        .eq("is_active", false)
+        .eq("is_archived", true)
         .order("sort_order");
       if (error) throw error;
       return Array.from(new Map((data ?? []).map((p) => [p.name.trim(), p])).values());
@@ -89,7 +89,7 @@ function ArchivePage() {
         .from("products")
         .select("*")
         .eq("category", "motorcycle")
-        .eq("is_active", false)
+        .eq("is_archived", true)
         .order("brand")
         .order("name");
       if (error) throw error;
@@ -103,7 +103,7 @@ function ArchivePage() {
       const { data, error } = await supabase
         .from("crew_members")
         .select("*")
-        .eq("is_active", false)
+        .eq("is_archived", true)
         .order("name");
       if (error) throw error;
       return Array.from(new Map((data ?? []).map((c) => [c.name.trim(), c])).values());
@@ -158,7 +158,7 @@ function ArchivePage() {
 
   const restoreService = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("services").update({ is_active: true }).eq("id", id);
+      const { error } = await supabase.from("services").update({ is_archived: false }).eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -174,7 +174,7 @@ function ArchivePage() {
 
   const restoreProduct = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("products").update({ is_active: true }).eq("id", id);
+      const { error } = await supabase.from("products").update({ is_archived: false }).eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -194,7 +194,7 @@ function ArchivePage() {
     mutationFn: async (id: string) => {
       const { error } = await supabase
         .from("crew_members")
-        .update({ is_active: true })
+        .update({ is_archived: false })
         .eq("id", id);
       if (error) throw error;
     },

@@ -37,6 +37,7 @@ export function QuickSchedule() {
         .from("services")
         .select("id,name,price,duration_minutes")
         .eq("is_active", true)
+        .eq("is_archived", false)
         .order("sort_order");
       if (error) throw error;
       return data ?? [];

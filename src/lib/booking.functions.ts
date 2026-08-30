@@ -225,13 +225,18 @@ export const getAvailability = createServerFn({ method: "GET" })
               .select("id,duration_minutes")
               .in("id", data.serviceIds)
               .eq("is_active", true)
+              .eq("is_archived", false)
           : { data: [] as { id: string; duration_minutes: number }[], error: null },
         supabaseAdmin
           .from("crew_schedules")
           .select("*")
           .gte("schedule_date", from)
           .lte("schedule_date", to),
-        supabaseAdmin.from("crew_members").select("id").eq("is_active", true),
+        supabaseAdmin
+          .from("crew_members")
+          .select("id")
+          .eq("is_active", true)
+          .eq("is_archived", false),
         supabaseAdmin
           .from("crew_availability_exceptions")
           .select("*")
@@ -422,7 +427,8 @@ export const createBooking = createServerFn({ method: "POST" })
       .from("services")
       .select("id,name,price,duration_minutes")
       .in("id", data.serviceIds)
-      .eq("is_active", true);
+      .eq("is_active", true)
+      .eq("is_archived", false);
     if (
       services.error ||
       !services.data?.length ||
@@ -492,6 +498,7 @@ export const createBooking = createServerFn({ method: "POST" })
         .from("crew_members")
         .select("id")
         .eq("is_active", true)
+        .eq("is_archived", false)
         .order("id");
       if (activeCrewRes.error) {
         return {

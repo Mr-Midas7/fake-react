@@ -45,6 +45,7 @@ function ShopPage() {
         .from("products")
         .select("*")
         .eq("is_active", true)
+        .eq("is_archived", false)
         .in("category", ["part", "accessory"])
         .order("sort_order");
       if (error) throw error;

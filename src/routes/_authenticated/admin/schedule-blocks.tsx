@@ -51,6 +51,7 @@ function ScheduleBlocks() {
       const { data, error } = await supabase
         .from("schedule_blocks")
         .select("*")
+        .eq("is_active", true)
         .order("block_date");
       if (error) throw error;
       return data;
@@ -122,7 +123,10 @@ function ScheduleBlocks() {
         .eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => {
+    onSuccess: (_, id) => {
+      qc.setQueryData<Array<{ id: string }>>(["schedule-blocks"], (blocks) =>
+        blocks?.filter((block) => block.id !== id),
+      );
       toast.success("Block archived");
       qc.invalidateQueries({ queryKey: ["schedule-blocks"], exact: false });
       qc.invalidateQueries({ queryKey: ["archived-blocks"], exact: false });

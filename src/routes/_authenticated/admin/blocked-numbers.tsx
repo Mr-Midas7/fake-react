@@ -118,7 +118,10 @@ function BlockedNumbersPage() {
         .eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => {
+    onSuccess: (_, id) => {
+      qc.setQueryData<BlockedNumber[]>(["blocked-numbers"], (numbers) =>
+        numbers?.filter((number) => number.id !== id),
+      );
       toast.success("Blocked number archived");
       qc.invalidateQueries({ queryKey: ["blocked-numbers"], exact: false });
       qc.invalidateQueries({ queryKey: ["archived-blocked-numbers"], exact: false });

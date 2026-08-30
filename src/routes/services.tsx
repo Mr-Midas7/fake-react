@@ -41,6 +41,7 @@ function ServicesPage() {
         .from("services")
         .select("*")
         .eq("is_active", true)
+        .eq("is_archived", false)
         .order("sort_order");
       if (error) throw error;
       return Array.from(new Map((data ?? []).map((s) => [s.name.trim(), s])).values());

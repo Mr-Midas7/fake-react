@@ -128,6 +128,7 @@ function BookPage() {
         .from("services")
         .select("*")
         .eq("is_active", true)
+        .eq("is_archived", false)
         .order("sort_order");
       if (error) throw error;
       return Array.from(new Map((data ?? []).map((s) => [s.name.trim(), s])).values());
@@ -142,6 +143,7 @@ function BookPage() {
         .select("brand,name")
         .eq("category", "motorcycle")
         .eq("is_active", true)
+        .eq("is_archived", false)
         .order("brand")
         .order("name");
       if (error) throw error;

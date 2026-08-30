@@ -243,6 +243,7 @@ export type Database = {
           created_at: string;
           id: string;
           is_active: boolean;
+          is_archived: boolean;
           name: string;
           phone: string | null;
           role: string;
@@ -251,6 +252,7 @@ export type Database = {
           created_at?: string;
           id?: string;
           is_active?: boolean;
+          is_archived?: boolean;
           name: string;
           phone?: string | null;
           role?: string;
@@ -259,6 +261,7 @@ export type Database = {
           created_at?: string;
           id?: string;
           is_active?: boolean;
+          is_archived?: boolean;
           name?: string;
           phone?: string | null;
           role?: string;
@@ -399,6 +402,7 @@ export type Database = {
           image_url: string | null;
           in_stock: boolean;
           is_active: boolean;
+          is_archived: boolean;
           is_featured: boolean;
           name: string;
           price: number;
@@ -414,6 +418,7 @@ export type Database = {
           image_url?: string | null;
           in_stock?: boolean;
           is_active?: boolean;
+          is_archived?: boolean;
           is_featured?: boolean;
           name: string;
           price?: number;
@@ -429,6 +434,7 @@ export type Database = {
           image_url?: string | null;
           in_stock?: boolean;
           is_active?: boolean;
+          is_archived?: boolean;
           is_featured?: boolean;
           name?: string;
           price?: number;
@@ -473,6 +479,7 @@ export type Database = {
           id: string;
           image_url: string | null;
           is_active: boolean;
+          is_archived: boolean;
           name: string;
           price: number;
           sort_order: number;
@@ -486,6 +493,7 @@ export type Database = {
           id?: string;
           image_url?: string | null;
           is_active?: boolean;
+          is_archived?: boolean;
           name: string;
           price?: number;
           sort_order?: number;
@@ -499,6 +507,7 @@ export type Database = {
           id?: string;
           image_url?: string | null;
           is_active?: boolean;
+          is_archived?: boolean;
           name?: string;
           price?: number;
           sort_order?: number;

@@ -50,6 +50,7 @@ function Home() {
         .from("products")
         .select("*")
         .eq("is_active", true)
+        .eq("is_archived", false)
         .neq("category", "motorcycle")
         .order("is_featured", { ascending: false })
         .order("sort_order")
@@ -66,6 +67,7 @@ function Home() {
         .from("services")
         .select("*")
         .eq("is_active", true)
+        .eq("is_archived", false)
         .order("sort_order")
         .limit(6);
       if (error) throw error;

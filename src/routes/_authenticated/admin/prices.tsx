@@ -79,7 +79,7 @@ function PriceTable({
   onHistoryClick: (id: string) => void;
 }) {
   const qc = useQueryClient();
-  const [filter, setFilter] = useState<"active" | "archived">("active");
+  const [filter, setFilter] = useState<"active" | "deactivated">("active");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<Record<string, boolean>>({});
@@ -95,7 +95,10 @@ function PriceTable({
               .in("category", ["part", "accessory"])
           : supabase.from("services").select("id,name,price,is_active");
 
-      const { data, error } = await query.eq("is_active", filter === "active").order("name");
+      const { data, error } = await query
+        .eq("is_archived", false)
+        .eq("is_active", filter === "active")
+        .order("name");
       if (error) throw error;
       return Array.from(
         new Map(
@@ -181,11 +184,11 @@ function PriceTable({
             </Button>
             <Button
               size="sm"
-              variant={filter === "archived" ? "default" : "outline"}
-              onClick={() => setFilter("archived")}
+              variant={filter === "deactivated" ? "default" : "outline"}
+              onClick={() => setFilter("deactivated")}
               className="font-display uppercase"
             >
-              Archived
+              Deactivated
             </Button>
           </div>
         </div>
@@ -229,7 +232,7 @@ function PriceTable({
                 )}
                 <TableCell>
                   <Badge variant="outline" className="uppercase">
-                    {r.is_active ? "Active" : "Archived"}
+                    {r.is_active ? "Active" : "Deactivated"}
                   </Badge>
                 </TableCell>
                 <TableCell className="flex justify-end gap-2 text-right">
@@ -253,7 +256,7 @@ function PriceTable({
         </Table>
         {rows.data?.length === 0 && (
           <p className="p-8 text-center text-sm text-muted-foreground">
-            {filter === "active" ? "No active items found." : "No archived items found."}
+            {filter === "active" ? "No active items found." : "No deactivated items found."}
           </p>
         )}
       </CardContent>

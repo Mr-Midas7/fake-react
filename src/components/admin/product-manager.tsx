@@ -47,6 +47,7 @@ type Product = {
   in_stock: boolean;
   is_featured: boolean;
   is_active: boolean;
+  is_archived: boolean;
   sort_order: number;
 };
 
@@ -98,6 +99,7 @@ export const ProductManager = forwardRef<
         .from("products")
         .select("*")
         .in("category", category === "part" ? ["part", "accessory"] : [category])
+        .eq("is_archived", false)
         .order("sort_order");
       if (error) throw error;
       return Array.from(new Map((data ?? []).map((p) => [p.name.trim(), p])).values()) as Product[];
@@ -112,6 +114,7 @@ export const ProductManager = forwardRef<
         .select("id,brand,name")
         .eq("category", "motorcycle")
         .eq("is_active", true)
+        .eq("is_archived", false)
         .order("brand")
         .order("name");
       if (error) throw error;
@@ -241,10 +244,13 @@ export const ProductManager = forwardRef<
 
   const archive = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("products").update({ is_active: false }).eq("id", id);
+      const { error } = await supabase.from("products").update({ is_archived: true }).eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => {
+    onSuccess: (_, id) => {
+      qc.setQueryData<Product[]>(["admin-products", category], (items) =>
+        items?.filter((item) => item.id !== id),
+      );
       toast.success("Product archived");
       qc.invalidateQueries({ queryKey: ["admin-products", category], exact: false });
       qc.invalidateQueries({ queryKey: ["archived-products"], exact: false });
@@ -594,6 +600,7 @@ export const ProductManager = forwardRef<
               <TableRow>
                 <TableHead>Model</TableHead>
                 <TableHead>Brand</TableHead>
+                {isMotorcycle && <TableHead>Status</TableHead>}
                 {!isMotorcycle && <TableHead>Price</TableHead>}
                 {!isMotorcycle && <TableHead>Status</TableHead>}
                 <TableHead className="text-right">Actions</TableHead>
@@ -609,6 +616,13 @@ export const ProductManager = forwardRef<
                     )}
                   </TableCell>
                   <TableCell className="text-sm">{p.brand ?? "-"}</TableCell>
+                  {isMotorcycle && (
+                    <TableCell>
+                      <Badge variant="outline" className="uppercase">
+                        {p.is_active ? "Active" : "Deactivated"}
+                      </Badge>
+                    </TableCell>
+                  )}
                   {!isMotorcycle && (
                     <TableCell className="text-sm text-primary">{formatPHP(p.price)}</TableCell>
                   )}
@@ -622,7 +636,7 @@ export const ProductManager = forwardRef<
                           Featured
                         </Badge>
                       )}
-                      {!p.is_active && <Badge variant="outline">Hidden</Badge>}
+                      {!p.is_active && <Badge variant="outline">Deactivated</Badge>}
                     </TableCell>
                   )}
                   <TableCell className="space-x-1 text-right">

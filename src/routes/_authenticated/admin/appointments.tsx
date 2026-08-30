@@ -78,6 +78,7 @@ function AppointmentsPage() {
         .from("crew_members")
         .select("*")
         .eq("is_active", true)
+        .eq("is_archived", false)
         .order("name");
       return Array.from(new Map((data ?? []).map((c) => [c.name.trim(), c])).values());
     },
@@ -111,7 +112,10 @@ function AppointmentsPage() {
         .eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => {
+    onSuccess: (_, id) => {
+      qc.setQueryData<Array<{ id: string }>>(["admin-appointments"], (appointments) =>
+        appointments?.filter((appointment) => appointment.id !== id),
+      );
       toast.success("Appointment archived");
       qc.invalidateQueries({ queryKey: ["admin-appointments"], exact: false });
       qc.invalidateQueries({ queryKey: ["admin-dashboard"], exact: false });
