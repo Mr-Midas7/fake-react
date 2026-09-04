@@ -33,6 +33,48 @@ export type Database = {
   };
   public: {
     Tables: {
+      admin_activity_logs: {
+        Row: {
+          action: string;
+          activity_date: string;
+          activity_time: string;
+          actor_email: string | null;
+          actor_id: string | null;
+          changed_fields: string[];
+          created_at: string;
+          id: string;
+          resource_type: string;
+          summary: string;
+          target_label: string;
+        };
+        Insert: {
+          action: string;
+          activity_date?: string;
+          activity_time?: string;
+          actor_email?: string | null;
+          actor_id?: string | null;
+          changed_fields?: string[];
+          created_at?: string;
+          id?: string;
+          resource_type: string;
+          summary: string;
+          target_label: string;
+        };
+        Update: {
+          action?: string;
+          activity_date?: string;
+          activity_time?: string;
+          actor_email?: string | null;
+          actor_id?: string | null;
+          changed_fields?: string[];
+          created_at?: string;
+          id?: string;
+          resource_type?: string;
+          summary?: string;
+          target_label?: string;
+        };
+        Relationships: [];
+      };
       appointment_services: {
         Row: {
           appointment_id: string;
@@ -611,9 +653,44 @@ export type Database = {
         };
         Returns: boolean;
       };
+      get_admin_customers_page: {
+        Args: {
+          p_limit?: number;
+          p_offset?: number;
+          p_search?: string | null;
+        };
+        Returns: Json;
+      };
+      get_admin_report_page: {
+        Args: {
+          p_category?: string | null;
+          p_from: string;
+          p_limit?: number;
+          p_offset?: number;
+          p_report_kind: string;
+          p_service_name?: string | null;
+          p_status?: string | null;
+          p_to: string;
+        };
+        Returns: Json;
+      };
+      purge_expired_admin_activity_logs: {
+        Args: Record<PropertyKey, never>;
+        Returns: undefined;
+      };
+      record_admin_activity_event: {
+        Args: {
+          p_action: string;
+          p_changed_fields?: string[];
+          p_resource_type: string;
+          p_summary: string;
+          p_target_label: string;
+        };
+        Returns: string;
+      };
     };
     Enums: {
-      app_role: "admin" | "staff";
+      app_role: "admin";
     };
     CompositeTypes: {
       [_ in never]: never;
@@ -738,7 +815,7 @@ export const Constants = {
   },
   public: {
     Enums: {
-      app_role: ["admin", "staff"],
+      app_role: ["admin"],
     },
   },
 } as const;

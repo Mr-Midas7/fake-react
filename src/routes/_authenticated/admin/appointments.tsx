@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Archive, CalendarDays } from "lucide-react";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useDeferredValue, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { format } from "date-fns";
 
 import { PageHeader } from "@/components/admin/page-header";
+import { PaginationControls } from "@/components/admin/pagination-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -47,6 +48,7 @@ export const Route = createFileRoute("/_authenticated/admin/appointments")({
 });
 
 function AppointmentsPage() {
+  const pageSize = 25;
   const qc = useQueryClient();
   const navigate = useNavigate();
   const search = Route.useSearch();
@@ -55,19 +57,43 @@ function AppointmentsPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [appointmentDate, setAppointmentDate] = useState<Date | undefined>();
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [page, setPage] = useState(0);
   const focusedAppointmentId = search.appointmentId;
+  const deferredTerm = useDeferredValue(term);
+  const selectedDate = appointmentDate ? format(appointmentDate, "yyyy-MM-dd") : "";
 
   const appointments = useQuery({
-    queryKey: ["admin-appointments"],
+    queryKey: [
+      "admin-appointments",
+      { focusedAppointmentId, status, term: deferredTerm, selectedDate, page },
+    ],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("appointments")
-        .select("*, appointment_services(service_name, price), crew_members(name)")
+        .select("*, appointment_services(service_name, price), crew_members(name)", {
+          count: "exact",
+        })
         .eq("is_archived", false)
         .order("appointment_date", { ascending: false })
         .order("start_time");
+
+      if (focusedAppointmentId) {
+        query = query.eq("id", focusedAppointmentId);
+      } else {
+        if (status !== "all") query = query.eq("status", status);
+        if (selectedDate) query = query.eq("appointment_date", selectedDate);
+        if (deferredTerm.trim()) {
+          const value = cleanSearchTerm(deferredTerm);
+          query = query.or(
+            `reference_code.ilike.%${value}%,customer_name.ilike.%${value}%,phone.ilike.%${value}%,plate_number.ilike.%${value}%`,
+          );
+        }
+        query = query.range(page * pageSize, page * pageSize + pageSize - 1);
+      }
+
+      const { data, error, count } = await query;
       if (error) throw error;
-      return data;
+      return { rows: data ?? [], total: count ?? 0 };
     },
   });
 
@@ -112,10 +138,7 @@ function AppointmentsPage() {
         .eq("id", id);
       if (error) throw error;
     },
-    onSuccess: (_, id) => {
-      qc.setQueryData<Array<{ id: string }>>(["admin-appointments"], (appointments) =>
-        appointments?.filter((appointment) => appointment.id !== id),
-      );
+    onSuccess: () => {
       toast.success("Appointment archived");
       qc.invalidateQueries({ queryKey: ["admin-appointments"], exact: false });
       qc.invalidateQueries({ queryKey: ["admin-dashboard"], exact: false });
@@ -129,19 +152,10 @@ function AppointmentsPage() {
 
   useEffect(() => {
     setOpenId(focusedAppointmentId ?? null);
+    setPage(0);
   }, [focusedAppointmentId]);
 
-  const rows = (appointments.data ?? []).filter((a) => {
-    if (focusedAppointmentId) return a.id === focusedAppointmentId;
-    return (
-      (status === "all" || a.status === status) &&
-      (!appointmentDate || a.appointment_date === format(appointmentDate, "yyyy-MM-dd")) &&
-      (term.trim() === "" ||
-        `${a.reference_code} ${a.customer_name} ${a.phone} ${a.plate_number}`
-          .toLowerCase()
-          .includes(term.toLowerCase()))
-    );
-  });
+  const rows = appointments.data?.rows ?? [];
 
   return (
     <div>
@@ -157,11 +171,20 @@ function AppointmentsPage() {
       <div className="mb-4 flex flex-wrap gap-3">
         <Input
           value={term}
-          onChange={(e) => setTerm(e.target.value)}
+          onChange={(e) => {
+            setTerm(e.target.value);
+            setPage(0);
+          }}
           placeholder="Search reference, name, phone or plate"
           className="max-w-xs"
         />
-        <Select value={status} onValueChange={setStatus}>
+        <Select
+          value={status}
+          onValueChange={(value) => {
+            setStatus(value);
+            setPage(0);
+          }}
+        >
           <SelectTrigger className="w-full sm:w-48">
             <SelectValue />
           </SelectTrigger>
@@ -197,6 +220,7 @@ function AppointmentsPage() {
               onSelect={(selected) => {
                 if (!selected) return;
                 setAppointmentDate(selected);
+                setPage(0);
                 setCalendarOpen(false);
               }}
             />
@@ -208,6 +232,7 @@ function AppointmentsPage() {
                 className="mt-1 w-full"
                 onClick={() => {
                   setAppointmentDate(undefined);
+                  setPage(0);
                   setCalendarOpen(false);
                 }}
               >
@@ -382,8 +407,23 @@ function AppointmentsPage() {
                 : "No appointments found."}
             </p>
           )}
+          {!focusedAppointmentId && (
+            <PaginationControls
+              page={page}
+              pageSize={pageSize}
+              total={appointments.data?.total ?? 0}
+              onPageChange={setPage}
+            />
+          )}
         </CardContent>
       </Card>
     </div>
   );
+}
+
+function cleanSearchTerm(value: string) {
+  return value
+    .trim()
+    .replace(/[,%_()]/g, " ")
+    .replace(/\s+/g, " ");
 }

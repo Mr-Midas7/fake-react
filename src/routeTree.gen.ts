@@ -18,6 +18,7 @@ import { Route as ServicesRouteImport } from './routes/services'
 import { Route as ShopRouteImport } from './routes/shop'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authenticated/admin/index'
+import { Route as AuthenticatedAdminActivityLogRouteImport } from './routes/_authenticated/admin/activity-log'
 import { Route as AuthenticatedAdminAppointmentsRouteImport } from './routes/_authenticated/admin/appointments'
 import { Route as AuthenticatedAdminArchiveRouteImport } from './routes/_authenticated/admin/archive'
 import { Route as AuthenticatedAdminAvailabilityRouteImport } from './routes/_authenticated/admin/availability'
@@ -76,6 +77,12 @@ const AuthenticatedAdminIndexRoute = AuthenticatedAdminIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthenticatedAdminRoute,
 } as any)
+const AuthenticatedAdminActivityLogRoute =
+  AuthenticatedAdminActivityLogRouteImport.update({
+    id: '/activity-log',
+    path: '/activity-log',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
 const AuthenticatedAdminAppointmentsRoute =
   AuthenticatedAdminAppointmentsRouteImport.update({
     id: '/appointments',
@@ -162,6 +169,7 @@ export interface FileRoutesByFullPath {
   '/services': typeof ServicesRoute
   '/shop': typeof ShopRoute
   '/admin': typeof AuthenticatedAdminRouteWithChildren
+  '/admin/activity-log': typeof AuthenticatedAdminActivityLogRoute
   '/admin/appointments': typeof AuthenticatedAdminAppointmentsRoute
   '/admin/archive': typeof AuthenticatedAdminArchiveRoute
   '/admin/availability': typeof AuthenticatedAdminAvailabilityRoute
@@ -184,6 +192,7 @@ export interface FileRoutesByTo {
   '/my-appointment': typeof MyAppointmentRoute
   '/services': typeof ServicesRoute
   '/shop': typeof ShopRoute
+  '/admin/activity-log': typeof AuthenticatedAdminActivityLogRoute
   '/admin/appointments': typeof AuthenticatedAdminAppointmentsRoute
   '/admin/archive': typeof AuthenticatedAdminArchiveRoute
   '/admin/availability': typeof AuthenticatedAdminAvailabilityRoute
@@ -209,6 +218,7 @@ export interface FileRoutesById {
   '/services': typeof ServicesRoute
   '/shop': typeof ShopRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
+  '/_authenticated/admin/activity-log': typeof AuthenticatedAdminActivityLogRoute
   '/_authenticated/admin/appointments': typeof AuthenticatedAdminAppointmentsRoute
   '/_authenticated/admin/archive': typeof AuthenticatedAdminArchiveRoute
   '/_authenticated/admin/availability': typeof AuthenticatedAdminAvailabilityRoute
@@ -234,6 +244,7 @@ export interface FileRouteTypes {
     | '/services'
     | '/shop'
     | '/admin'
+    | '/admin/activity-log'
     | '/admin/appointments'
     | '/admin/archive'
     | '/admin/availability'
@@ -256,6 +267,7 @@ export interface FileRouteTypes {
     | '/my-appointment'
     | '/services'
     | '/shop'
+    | '/admin/activity-log'
     | '/admin/appointments'
     | '/admin/archive'
     | '/admin/availability'
@@ -280,6 +292,7 @@ export interface FileRouteTypes {
     | '/services'
     | '/shop'
     | '/_authenticated/admin'
+    | '/_authenticated/admin/activity-log'
     | '/_authenticated/admin/appointments'
     | '/_authenticated/admin/archive'
     | '/_authenticated/admin/availability'
@@ -369,6 +382,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/admin/'
       preLoaderRoute: typeof AuthenticatedAdminIndexRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
+    '/_authenticated/admin/activity-log': {
+      id: '/_authenticated/admin/activity-log'
+      path: '/activity-log'
+      fullPath: '/admin/activity-log'
+      preLoaderRoute: typeof AuthenticatedAdminActivityLogRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
     '/_authenticated/admin/appointments': {
@@ -466,6 +486,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedAdminRouteChildren {
+  AuthenticatedAdminActivityLogRoute: typeof AuthenticatedAdminActivityLogRoute
   AuthenticatedAdminAppointmentsRoute: typeof AuthenticatedAdminAppointmentsRoute
   AuthenticatedAdminArchiveRoute: typeof AuthenticatedAdminArchiveRoute
   AuthenticatedAdminAvailabilityRoute: typeof AuthenticatedAdminAvailabilityRoute
@@ -483,6 +504,7 @@ interface AuthenticatedAdminRouteChildren {
 }
 
 const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
+  AuthenticatedAdminActivityLogRoute: AuthenticatedAdminActivityLogRoute,
   AuthenticatedAdminAppointmentsRoute: AuthenticatedAdminAppointmentsRoute,
   AuthenticatedAdminArchiveRoute: AuthenticatedAdminArchiveRoute,
   AuthenticatedAdminAvailabilityRoute: AuthenticatedAdminAvailabilityRoute,

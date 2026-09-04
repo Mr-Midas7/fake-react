@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
+import { recordAdminActivityEvent } from "@/lib/admin-activity";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
@@ -17,11 +18,15 @@ export const Route = createFileRoute("/auth")({
       { title: "Admin Login | Fake Rider Motorparts" },
       {
         name: "description",
-        content: "Staff-only login for the Fake Rider Motorparts appointment management console.",
+        content:
+          "Administrator login for the Fake Rider Motorparts appointment management console.",
       },
       { name: "robots", content: "noindex" },
       { property: "og:title", content: "Admin Login | Fake Rider Motorparts" },
-      { property: "og:description", content: "Staff-only access to the shop management console." },
+      {
+        property: "og:description",
+        content: "Administrator access to the shop management console.",
+      },
     ],
   }),
   component: AuthPage,
@@ -47,7 +52,20 @@ function AuthPage() {
       });
       if (error) throw error;
     },
-    onSuccess: () => navigate({ to: "/admin", replace: true }),
+    onSuccess: async () => {
+      try {
+        await recordAdminActivityEvent({
+          action: "signed in",
+          resourceType: "Authentication",
+          targetLabel: "Admin console",
+          summary: "Administrator signed in to the admin console.",
+        });
+      } catch {
+        // Access is verified by the protected admin route; a log failure must
+        // not leave an authenticated administrator stuck on the login screen.
+      }
+      navigate({ to: "/admin", replace: true });
+    },
     onError: (e: Error) => toast.error(e.message || "Invalid email or password."),
   });
 
@@ -65,7 +83,9 @@ function AuthPage() {
         <CardContent className="p-8">
           <img src={logo.url} alt="Fake Rider Motorparts logo" className="mx-auto h-24 w-auto" />
           <h1 className="mt-4 text-center font-display text-2xl uppercase">Admin login</h1>
-          <p className="mt-1 text-center text-sm text-muted-foreground">Shop staff access only.</p>
+          <p className="mt-1 text-center text-sm text-muted-foreground">
+            Administrator access only.
+          </p>
 
           <form
             className="mt-6 space-y-4"

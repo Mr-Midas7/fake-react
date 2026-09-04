@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { CalendarDays, Eye } from "lucide-react";
-import { useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 
 import { PageHeader } from "@/components/admin/page-header";
+import { PaginationControls } from "@/components/admin/pagination-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,81 +26,73 @@ export const Route = createFileRoute("/_authenticated/admin/customers")({
   component: CustomersPage,
 });
 
-function CustomersPage() {
-  const [term, setTerm] = useState("");
-  const [historyCustomer, setHistoryCustomer] = useState<string | null>(null);
+type Customer = {
+  customer_name: string;
+  phone: string;
+  email: string | null;
+  visits: number;
+  completed_spend: number | string;
+  last_booking: string;
+  units: string[];
+};
 
-  const appts = useQuery({
-    queryKey: ["customers"],
+type CustomerPage = { rows: Customer[]; total: number };
+
+function CustomersPage() {
+  const pageSize = 25;
+  const historyPageSize = 15;
+  const [term, setTerm] = useState("");
+  const [page, setPage] = useState(0);
+  const [historyPage, setHistoryPage] = useState(0);
+  const [historyCustomer, setHistoryCustomer] = useState<string | null>(null);
+  const deferredTerm = useDeferredValue(term);
+
+  const customers = useQuery({
+    queryKey: ["customers", { search: deferredTerm, page }],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("appointments")
-        .select(
-          "customer_name,phone,email,moto_brand,moto_model,plate_number,appointment_date,total_estimate,status",
-        )
-        .order("appointment_date", { ascending: false });
+      const { data, error } = await supabase.rpc("get_admin_customers_page", {
+        p_search: cleanSearchTerm(deferredTerm) || null,
+        p_limit: pageSize,
+        p_offset: page * pageSize,
+      });
       if (error) throw error;
-      return data;
+      return data as unknown as CustomerPage;
     },
   });
 
   const customerHistory = useQuery({
-    queryKey: ["customer-history", historyCustomer],
+    queryKey: ["customer-history", historyCustomer, historyPage],
     queryFn: async () => {
-      if (!historyCustomer) return [];
-      const { data, error } = await supabase
+      if (!historyCustomer) return { rows: [], total: 0 };
+      const { data, error, count } = await supabase
         .from("appointments")
         .select(
           "id,customer_name,appointment_date,start_time,status,total_estimate,moto_brand,moto_model,plate_number,is_archived",
+          { count: "exact" },
         )
         .eq("phone", historyCustomer)
-        .order("appointment_date", { ascending: false });
+        .order("appointment_date", { ascending: false })
+        .order("start_time", { ascending: false })
+        .range(historyPage * historyPageSize, historyPage * historyPageSize + historyPageSize - 1);
       if (error) throw error;
-      return data;
+      return { rows: data ?? [], total: count ?? 0 };
     },
     enabled: !!historyCustomer,
   });
 
-  const map = new Map<
-    string,
-    {
-      name: string;
-      phone: string;
-      email: string | null;
-      visits: number;
-      spent: number;
-      last: string;
-      units: Set<string>;
-    }
-  >();
-  for (const a of appts.data ?? []) {
-    const c = map.get(a.phone) ?? {
-      name: a.customer_name,
-      phone: a.phone,
-      email: a.email,
-      visits: 0,
-      spent: 0,
-      last: a.appointment_date,
-      units: new Set<string>(),
-    };
-    c.visits += 1;
-    if (a.status === "completed") c.spent += Number(a.total_estimate);
-    if (a.appointment_date > c.last) c.last = a.appointment_date;
-    c.units.add(`${a.moto_brand} ${a.moto_model} (${a.plate_number})`);
-    map.set(a.phone, c);
-  }
+  useEffect(() => {
+    setPage(0);
+  }, [term]);
 
-  const rows = [...map.values()].filter(
-    (c) => term.trim() === "" || `${c.name} ${c.phone}`.toLowerCase().includes(term.toLowerCase()),
-  );
+  const rows = customers.data?.rows ?? [];
 
   return (
     <div>
       <PageHeader title="Customer List" description="Everyone who has booked with the shop." />
       <Input
         value={term}
-        onChange={(e) => setTerm(e.target.value)}
-        placeholder="Search name or number"
+        onChange={(event) => setTerm(event.target.value)}
+        placeholder="Search name, number, or email"
         className="mb-4 max-w-xs"
       />
       <Card className="border-border/70 bg-card/60">
@@ -117,19 +110,31 @@ function CustomersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((c) => (
-                <TableRow key={c.phone}>
-                  <TableCell className="text-sm">{c.name}</TableCell>
+              {rows.map((customer) => (
+                <TableRow key={customer.phone}>
+                  <TableCell className="text-sm">{customer.customer_name}</TableCell>
                   <TableCell className="text-xs">
-                    {c.phone}
-                    {c.email && <span className="block text-muted-foreground">{c.email}</span>}
+                    {customer.phone}
+                    {customer.email && (
+                      <span className="block text-muted-foreground">{customer.email}</span>
+                    )}
                   </TableCell>
-                  <TableCell className="text-xs">{[...c.units].join(", ")}</TableCell>
-                  <TableCell className="text-sm">{c.visits}</TableCell>
-                  <TableCell className="text-sm text-primary">{formatPHP(c.spent)}</TableCell>
-                  <TableCell className="text-xs">{formatDateLong(c.last)}</TableCell>
+                  <TableCell className="max-w-72 text-xs">{customer.units.join(", ")}</TableCell>
+                  <TableCell className="text-sm">{customer.visits}</TableCell>
+                  <TableCell className="text-sm text-primary">
+                    {formatPHP(customer.completed_spend)}
+                  </TableCell>
+                  <TableCell className="text-xs">{formatDateLong(customer.last_booking)}</TableCell>
                   <TableCell className="text-right">
-                    <Button size="sm" variant="ghost" onClick={() => setHistoryCustomer(c.phone)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`View ${customer.customer_name}'s appointment history`}
+                      onClick={() => {
+                        setHistoryCustomer(customer.phone);
+                        setHistoryPage(0);
+                      }}
+                    >
                       <Eye className="h-4 w-4" />
                     </Button>
                   </TableCell>
@@ -137,9 +142,20 @@ function CustomersPage() {
               ))}
             </TableBody>
           </Table>
-          {rows.length === 0 && (
-            <p className="p-8 text-center text-sm text-muted-foreground">No customers yet.</p>
+          {!customers.isLoading && rows.length === 0 && (
+            <p className="p-8 text-center text-sm text-muted-foreground">No customers found.</p>
           )}
+          {customers.isError && (
+            <p className="p-8 text-center text-sm text-destructive">
+              Could not load customers. Please try again.
+            </p>
+          )}
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            total={customers.data?.total ?? 0}
+            onPageChange={setPage}
+          />
         </CardContent>
       </Card>
 
@@ -149,49 +165,66 @@ function CustomersPage() {
             <DialogTitle className="font-display uppercase">Appointment History</DialogTitle>
           </DialogHeader>
           <div className="space-y-1">
-            {customerHistory.data?.map((a) => (
+            {customerHistory.data?.rows.map((appointment) => (
               <div
-                key={a.id}
-                className="flex items-center justify-between rounded-lg border border-border/50 p-3 text-sm"
+                key={appointment.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/50 p-3 text-sm"
               >
                 <div className="flex items-center gap-3">
                   <CalendarDays className="h-4 w-4 text-muted-foreground" />
                   <div>
-                    <span className="font-medium">{formatDateLong(a.appointment_date)}</span>
-                    {a.start_time && (
+                    <span className="font-medium">
+                      {formatDateLong(appointment.appointment_date)}
+                    </span>
+                    {appointment.start_time && (
                       <span className="ml-2 text-muted-foreground">
-                        {formatTime(String(a.start_time).slice(0, 5))}
+                        {formatTime(String(appointment.start_time).slice(0, 5))}
                       </span>
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex flex-wrap items-center gap-3">
                   <span className="text-xs text-muted-foreground">
-                    {a.moto_brand} {a.moto_model}
+                    {appointment.moto_brand} {appointment.moto_model}
                   </span>
-                  {a.is_archived && (
+                  {appointment.is_archived && (
                     <Badge variant="outline" className="text-[10px] uppercase">
                       Archived
                     </Badge>
                   )}
                   <Badge
                     variant="outline"
-                    className={cn("text-[10px] uppercase", statusTone(a.status))}
+                    className={cn("text-[10px] uppercase", statusTone(appointment.status))}
                   >
-                    {statusLabel(a.status)}
+                    {statusLabel(appointment.status)}
                   </Badge>
-                  <span className="text-sm text-primary">{formatPHP(a.total_estimate)}</span>
+                  <span className="text-sm text-primary">
+                    {formatPHP(appointment.total_estimate)}
+                  </span>
                 </div>
               </div>
             ))}
-            {customerHistory.data?.length === 0 && (
+            {!customerHistory.isLoading && customerHistory.data?.rows.length === 0 && (
               <p className="py-8 text-center text-sm text-muted-foreground">
-                {customerHistory.isLoading ? "Loading..." : "No appointments found."}
+                No appointments found.
               </p>
             )}
           </div>
+          <PaginationControls
+            page={historyPage}
+            pageSize={historyPageSize}
+            total={customerHistory.data?.total ?? 0}
+            onPageChange={setHistoryPage}
+          />
         </DialogContent>
       </Dialog>
     </div>
   );
+}
+
+function cleanSearchTerm(value: string) {
+  return value
+    .trim()
+    .replace(/[,%_()]/g, " ")
+    .replace(/\s+/g, " ");
 }

@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Download, FileText } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/page-header";
+import { PaginationControls } from "@/components/admin/pagination-controls";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,6 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -25,6 +28,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -33,247 +43,318 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
+import { recordAdminActivityEvent } from "@/lib/admin-activity";
+import {
+  formatBusinessTimestamp,
+  getShopLogoDataUrl,
+  SHOP_EXPORT_NAME,
+  SHOP_OWNER_NAME,
+} from "@/lib/export-branding";
 import { addDays, formatDateLong, formatPHP, manilaNow, statusLabel } from "@/lib/shop";
 
 export const Route = createFileRoute("/_authenticated/admin/reports")({
   component: ReportsPage,
 });
 
+const reportOptions = [
+  { value: "bookings", label: "Booking volume" },
+  { value: "services", label: "Service activity" },
+] as const;
+
+const periodOptions = [
+  { value: "this_week", label: "This week" },
+  { value: "this_month", label: "This month" },
+  { value: "this_year", label: "This year" },
+  { value: "custom", label: "Custom dates" },
+] as const;
+
+const statusOptions = ["pending", "confirmed", "in_progress", "completed", "cancelled", "no_show"];
+
+type ReportKind = (typeof reportOptions)[number]["value"];
+type PeriodPreset = (typeof periodOptions)[number]["value"];
+type ExportType = "csv" | "pdf";
+
+type CatalogService = { id: string; name: string; category: string };
+type BookingRow = {
+  id: string;
+  reference_code: string;
+  customer_name: string;
+  appointment_date: string;
+  status: string;
+  total_estimate: number | string;
+};
+type ServiceRow = {
+  appointment_id: string;
+  service_id: string | null;
+  service_name: string;
+  price: number | string;
+  reference_code: string;
+  customer_name: string;
+  appointment_date: string;
+  status: string;
+  category: string;
+};
+type ReportMetrics = {
+  total_bookings: number;
+  completed_bookings?: number;
+  completed_rows?: number;
+  completed_value: number | string;
+  status_counts: Record<string, number>;
+};
+type ReportPage = { rows: Array<BookingRow | ServiceRow>; total: number; metrics: ReportMetrics };
+type ExportData = { headers: string[]; rows: string[][]; summary: string[] };
+
 function ReportsPage() {
+  const pageSize = 25;
   const today = manilaNow().date;
-  const [from, setFrom] = useState(addDays(today, -30));
-  const [to, setTo] = useState(today);
-  const [pendingExport, setPendingExport] = useState<"csv" | "pdf" | null>(null);
+  const initialRange = periodRange("this_month", today);
+  const [reportKind, setReportKind] = useState<ReportKind>("bookings");
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("this_month");
+  const [from, setFrom] = useState(initialRange.from);
+  const [to, setTo] = useState(initialRange.to);
+  const [category, setCategory] = useState("all");
+  const [serviceName, setServiceName] = useState("all");
+  const [status, setStatus] = useState("all");
+  const [page, setPage] = useState(0);
+  const [pendingExport, setPendingExport] = useState<ExportType | null>(null);
 
-  const data = useQuery({
-    queryKey: ["reports", from, to],
+  const catalog = useQuery({
+    queryKey: ["report-service-catalog"],
     queryFn: async () => {
-      const { data: appts, error } = await supabase
-        .from("appointments")
-        .select("id,reference_code,customer_name,appointment_date,status,total_estimate")
-        .neq("is_archived", true)
-        .gte("appointment_date", from)
-        .lte("appointment_date", to)
-        .order("appointment_date");
+      const { data, error } = await supabase
+        .from("services")
+        .select("id,name,category")
+        .order("category")
+        .order("name");
       if (error) throw error;
-
-      const ids = (appts ?? []).map((a) => a.id);
-      let services: { appointment_id: string; service_name: string; price: number }[] = [];
-      if (ids.length > 0) {
-        const res = await supabase
-          .from("appointment_services")
-          .select("appointment_id,service_name,price")
-          .in("appointment_id", ids);
-        if (res.error) throw res.error;
-        services = (res.data ?? []) as typeof services;
-      }
-      return { appts: appts ?? [], services };
+      return (data ?? []) as CatalogService[];
     },
   });
 
-  const appts = data.data?.appts ?? [];
-  const services = data.data?.services ?? [];
+  const data = useQuery({
+    queryKey: ["reports", { reportKind, from, to, status, category, serviceName, page }],
+    queryFn: () =>
+      getReportPage({
+        reportKind,
+        from,
+        to,
+        status,
+        category,
+        serviceName,
+        limit: pageSize,
+        offset: page * pageSize,
+      }),
+  });
 
-  const byStatus = new Map<string, number>();
-  for (const a of appts) byStatus.set(a.status, (byStatus.get(a.status) ?? 0) + 1);
+  useEffect(() => {
+    setPage(0);
+  }, [reportKind, from, to, status, category, serviceName]);
 
-  const completed = appts.filter((a) => a.status === "completed");
-  const revenue = completed.reduce((s, a) => s + Number(a.total_estimate), 0);
-  const pipeline = appts
-    .filter((a) => ["pending", "confirmed", "in_progress"].includes(a.status))
-    .reduce((s, a) => s + Number(a.total_estimate), 0);
-
-  const activeApptIds = new Set(
-    appts.filter((a) => !["cancelled", "no_show"].includes(a.status)).map((a) => a.id),
+  const categories = useMemo(
+    () =>
+      Array.from(new Set((catalog.data ?? []).map((item) => item.category).filter(Boolean))).sort(),
+    [catalog.data],
   );
-
-  const topServices = [
-    ...services
-      .filter((s) => activeApptIds.has(s.appointment_id))
-      .reduce((map, s) => {
-        const cur = map.get(s.service_name) ?? { count: 0, value: 0 };
-        cur.count += 1;
-        cur.value += Number(s.price);
-        map.set(s.service_name, cur);
-        return map;
-      }, new Map<string, { count: number; value: number }>())
-      .entries(),
+  const serviceOptions = useMemo(
+    () =>
+      (catalog.data ?? [])
+        .filter((item) => category === "all" || item.category === category)
+        .sort((first, second) => first.name.localeCompare(second.name)),
+    [catalog.data, category],
+  );
+  const metrics = data.data?.metrics;
+  const byStatus = Object.entries(metrics?.status_counts ?? {}).sort(([first], [second]) =>
+    first.localeCompare(second),
+  );
+  const preview = makeExportData(reportKind, data.data?.rows ?? [], metrics);
+  const reportTitle =
+    reportKind === "bookings"
+      ? "Booking Volume Report"
+      : `${serviceName !== "all" ? serviceName : category !== "all" ? category : "All Services"} Activity Report`;
+  const reportScope = [
+    `${formatDateLong(from)} to ${formatDateLong(to)}`,
+    status === "all" ? "All booking statuses" : statusLabel(status),
+    category === "all" ? "All categories" : category,
+    serviceName === "all" ? null : serviceName,
   ]
-    .sort((a, b) => b[1].count - a[1].count)
-    .slice(0, 10);
+    .filter(Boolean)
+    .join(" · ");
 
-  const byMonth = [
-    ...appts
-      .reduce((map, a) => {
-        const key = a.appointment_date.slice(0, 7);
-        map.set(key, (map.get(key) ?? 0) + 1);
-        return map;
-      }, new Map<string, number>())
-      .entries(),
-  ].sort((a, b) => a[0].localeCompare(b[0]));
-  const peak = Math.max(1, ...byMonth.map(([, n]) => n));
-
-  function exportCsv() {
-    const header = ["Reference", "Customer", "Date", "Status", "Estimate"];
-    const lines = appts.map((a) =>
-      [
-        a.reference_code,
-        a.customer_name,
-        a.appointment_date,
-        statusLabel(a.status),
-        Number(a.total_estimate).toFixed(2),
-      ]
-        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
-        .join(","),
-    );
-    const csv = [header.join(","), ...lines].join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `fake-rider-report-${from}-to-${to}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function exportPdf() {
-    const [{ jsPDF }, { default: autoTable }] = await Promise.all([
-      import("jspdf"),
-      import("jspdf-autotable"),
-    ]);
-    const doc = new jsPDF();
-
-    doc.setFontSize(16);
-    doc.text("Fake Rider Motorparts - Report", 14, 20);
-    doc.setFontSize(10);
-    doc.text(`Period: ${formatDateLong(from)} to ${formatDateLong(to)}`, 14, 28);
-
-    let y = 38;
-    doc.setFontSize(10);
-    doc.text(`Total bookings: ${appts.length}`, 14, y);
-    doc.text(`Completed jobs: ${completed.length}`, 60, y);
-    doc.text(`Completed revenue: ${formatPHP(revenue).replace(/₱\s*/, "PHP ")}`, 110, y);
-    doc.text(`Pipeline estimate: ${formatPHP(pipeline).replace(/₱\s*/, "PHP ")}`, 170, y);
-    y += 10;
-
-    const tableData = appts.map((a) => [
-      a.reference_code,
-      a.customer_name,
-      formatDateLong(a.appointment_date),
-      statusLabel(a.status),
-      `PHP ${Number(a.total_estimate).toFixed(2)}`,
-    ]);
-
-    autoTable(doc, {
-      startY: y,
-      head: [["Reference", "Customer", "Date", "Status", "Estimate"]],
-      body: tableData,
-      theme: "grid",
-      styles: { fontSize: 8 },
-      headStyles: { fillColor: [220, 220, 220], textColor: [0, 0, 0] },
-    });
-
-    doc.save(`fake-rider-report-${from}-to-${to}.pdf`);
+  function updatePeriod(value: PeriodPreset) {
+    setPeriodPreset(value);
+    if (value === "custom") return;
+    const range = periodRange(value, today);
+    setFrom(range.from);
+    setTo(range.to);
   }
 
   async function confirmExport() {
-    if (pendingExport === "csv") exportCsv();
-    if (pendingExport === "pdf") await exportPdf();
-    setPendingExport(null);
+    if (!pendingExport) return;
+    try {
+      const allRows = await getAllReportRows({
+        reportKind,
+        from,
+        to,
+        status,
+        category,
+        serviceName,
+      });
+      const exportData = makeExportData(reportKind, allRows.rows, allRows.metrics);
+      if (pendingExport === "csv") exportCsv(exportData, reportKind, from, to);
+      if (pendingExport === "pdf")
+        await exportPdf(exportData, reportKind, reportTitle, reportScope, from, to);
+      await recordAdminActivityEvent({
+        action: "exported",
+        resourceType: "Reports",
+        targetLabel: reportTitle,
+        summary: `Exported ${allRows.total} ${reportKind === "services" ? "service entries" : "bookings"} as ${pendingExport.toUpperCase()}.`,
+        changedFields: ["report_type", "date_range", "export_format"],
+      });
+      toast.success("Report exported.");
+    } catch {
+      toast.error("Could not create this report export. Please try again.");
+    } finally {
+      setPendingExport(null);
+    }
   }
+
+  const rowLabel = reportKind === "services" ? "service entries" : "bookings";
 
   return (
     <div>
       <PageHeader
         title="Reports"
-        description="Bookings, top services and revenue estimates for the selected period."
+        description="Build booking-volume or service-activity reports for a selected period."
         action={
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" disabled={appts.length === 0} className="uppercase">
-                <Download /> Export
+              <Button variant="outline" disabled={!data.data?.total} className="uppercase">
+                <Download /> Export selected report
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={() => setPendingExport("csv")}>
-                <Download className="mr-2 h-4 w-4" />
-                Export CSV
+                <Download className="mr-2 h-4 w-4" /> Export CSV table
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setPendingExport("pdf")}>
-                <FileText className="mr-2 h-4 w-4" />
-                Export PDF
+                <FileText className="mr-2 h-4 w-4" /> Export PDF table
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         }
       />
 
-      <div className="mb-6 flex flex-wrap gap-4">
-        <div className="space-y-1.5">
-          <Label>From</Label>
-          <Input
-            type="date"
-            value={from}
-            max={to}
-            onChange={(e) => setFrom(e.target.value)}
-            className="w-full sm:w-44"
+      <Card className="mb-6 border-border/70 bg-card/60">
+        <CardContent className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-4">
+          <FilterSelect
+            label="Report"
+            value={reportKind}
+            onValueChange={(value) => setReportKind(value as ReportKind)}
+            options={reportOptions}
           />
-        </div>
-        <div className="space-y-1.5">
-          <Label>To</Label>
-          <Input
-            type="date"
-            value={to}
-            min={from}
-            onChange={(e) => setTo(e.target.value)}
-            className="w-full sm:w-44"
+          <FilterSelect
+            label="Period"
+            value={periodPreset}
+            onValueChange={(value) => updatePeriod(value as PeriodPreset)}
+            options={periodOptions}
           />
-        </div>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Total bookings" value={String(appts.length)} />
-        <Stat label="Completed jobs" value={String(completed.length)} />
-        <Stat label="Completed revenue" value={formatPHP(revenue)} />
-        <Stat label="Pipeline estimate" value={formatPHP(pipeline)} />
-      </div>
-
-      <div className="mt-8 grid gap-6 lg:grid-cols-2">
-        <Card className="border-border/70 bg-card/60">
-          <CardContent className="p-5">
-            <h2 className="font-display text-sm tracking-widest uppercase">Bookings per month</h2>
-            {byMonth.length === 0 ? (
-              <p className="mt-4 text-sm text-muted-foreground">No bookings in this period.</p>
-            ) : (
-              <ul className="mt-4 space-y-3">
-                {byMonth.map(([month, count]) => (
-                  <li key={month}>
-                    <div className="flex justify-between text-xs text-muted-foreground uppercase">
-                      <span>{month}</span>
-                      <span>{count}</span>
-                    </div>
-                    <div className="mt-1 h-2 rounded-full bg-secondary/60">
-                      <div
-                        className="h-2 rounded-full bg-primary"
-                        style={{ width: `${(count / peak) * 100}%` }}
-                      />
-                    </div>
-                  </li>
+          <FilterSelect
+            label="Service category"
+            value={category}
+            onValueChange={(value) => {
+              setCategory(value);
+              setServiceName("all");
+            }}
+            options={[
+              { value: "all", label: "All categories" },
+              ...categories.map((value) => ({ value, label: value })),
+            ]}
+          />
+          <FilterSelect
+            label="Booking status"
+            value={status}
+            onValueChange={setStatus}
+            options={[
+              { value: "all", label: "All statuses" },
+              ...statusOptions.map((value) => ({ value, label: statusLabel(value) })),
+            ]}
+          />
+          <div className="space-y-1.5 xl:col-span-2">
+            <Label>Specific service</Label>
+            <Select value={serviceName} onValueChange={setServiceName}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All services</SelectItem>
+                {serviceOptions.map((item) => (
+                  <SelectItem key={item.id} value={item.name}>
+                    {item.name}
+                  </SelectItem>
                 ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+              </SelectContent>
+            </Select>
+          </div>
+          {periodPreset === "custom" && (
+            <>
+              <div className="space-y-1.5">
+                <Label htmlFor="report-from">From</Label>
+                <Input
+                  id="report-from"
+                  type="date"
+                  value={from}
+                  max={to}
+                  onChange={(event) => setFrom(event.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="report-to">To</Label>
+                <Input
+                  id="report-to"
+                  type="date"
+                  value={to}
+                  min={from}
+                  onChange={(event) => setTo(event.target.value)}
+                />
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
+      <div className="mb-6 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+        <Badge variant="outline">{reportTitle}</Badge>
+        <span>{reportScope}</span>
+      </div>
+      {reportKind === "bookings" ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Stat label="Total bookings" value={String(metrics?.total_bookings ?? 0)} />
+          <Stat label="Completed jobs" value={String(metrics?.completed_bookings ?? 0)} />
+          <Stat label="Completed revenue" value={formatPHP(metrics?.completed_value ?? 0)} />
+          <Stat label="Status groups" value={String(byStatus.length)} />
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Stat label="Service entries" value={String(data.data?.total ?? 0)} />
+          <Stat label="Bookings served" value={String(metrics?.total_bookings ?? 0)} />
+          <Stat label="Completed entries" value={String(metrics?.completed_rows ?? 0)} />
+          <Stat label="Completed service value" value={formatPHP(metrics?.completed_value ?? 0)} />
+        </div>
+      )}
+
+      <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_1.5fr]">
         <Card className="border-border/70 bg-card/60">
           <CardContent className="p-5">
             <h2 className="font-display text-sm tracking-widest uppercase">Status breakdown</h2>
-            {byStatus.size === 0 ? (
-              <p className="mt-4 text-sm text-muted-foreground">Nothing to report yet.</p>
+            {byStatus.length === 0 ? (
+              <p className="mt-4 text-sm text-muted-foreground">
+                Nothing to report for this selection.
+              </p>
             ) : (
               <ul className="mt-4 space-y-2 text-sm">
-                {[...byStatus.entries()].map(([status, count]) => (
-                  <li key={status} className="flex justify-between border-b border-border/50 pb-2">
-                    <span>{statusLabel(status)}</span>
+                {byStatus.map(([item, count]) => (
+                  <li key={item} className="flex justify-between border-b border-border/50 pb-2">
+                    <span>{statusLabel(item)}</span>
                     <span className="text-muted-foreground">{count}</span>
                   </li>
                 ))}
@@ -281,51 +362,69 @@ function ReportsPage() {
             )}
           </CardContent>
         </Card>
-      </div>
-
-      <Card className="mt-6 border-border/70 bg-card/60">
-        <CardContent className="overflow-x-auto p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Top services</TableHead>
-                <TableHead>Times booked</TableHead>
-                <TableHead>Value</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {topServices.map(([name, s]) => (
-                <TableRow key={name}>
-                  <TableCell className="text-sm">{name}</TableCell>
-                  <TableCell className="text-sm">{s.count}</TableCell>
-                  <TableCell className="text-sm">{formatPHP(s.value)}</TableCell>
-                </TableRow>
-              ))}
-              {topServices.length === 0 && (
+        <Card className="border-border/70 bg-card/60">
+          <CardContent className="overflow-x-auto p-0">
+            <div className="border-b border-border px-5 py-3 text-sm text-muted-foreground">
+              Preview: {preview.rows.length} of {data.data?.total ?? 0} {rowLabel}
+            </div>
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={3} className="py-8 text-center text-sm text-muted-foreground">
-                    No services booked between {formatDateLong(from)} and {formatDateLong(to)}.
-                  </TableCell>
+                  {preview.headers.map((header) => (
+                    <TableHead key={header}>{header}</TableHead>
+                  ))}
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+              </TableHeader>
+              <TableBody>
+                {preview.rows.map((row, index) => (
+                  <TableRow key={`${row[0]}-${row[4] ?? ""}-${index}`}>
+                    {row.map((cell, cellIndex) => (
+                      <TableCell key={`${cellIndex}-${cell}`} className="whitespace-nowrap text-sm">
+                        {cell}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+                {!data.isLoading && preview.rows.length === 0 && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={preview.headers.length}
+                      className="py-10 text-center text-sm text-muted-foreground"
+                    >
+                      No {rowLabel} match this report selection.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+            {data.isLoading && (
+              <p className="p-8 text-center text-sm text-muted-foreground">Loading report…</p>
+            )}
+            {data.isError && (
+              <p className="p-8 text-center text-sm text-destructive">
+                Could not load this report. Please try again.
+              </p>
+            )}
+            <PaginationControls
+              page={page}
+              pageSize={pageSize}
+              total={data.data?.total ?? 0}
+              onPageChange={setPage}
+            />
+          </CardContent>
+        </Card>
+      </div>
 
       <AlertDialog
         open={pendingExport !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingExport(null);
-        }}
+        onOpenChange={(open) => !open && setPendingExport(null)}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirm report export</AlertDialogTitle>
             <AlertDialogDescription>
-              Export {appts.length} {appts.length === 1 ? "booking" : "bookings"} from{" "}
-              {formatDateLong(from)} to {formatDateLong(to)} as a {pendingExport?.toUpperCase()}{" "}
-              file?
+              Export the selected {reportTitle.toLowerCase()} with all {data.data?.total ?? 0}{" "}
+              {rowLabel} as a {pendingExport?.toUpperCase()} table?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -340,12 +439,214 @@ function ReportsPage() {
   );
 }
 
+function FilterSelect({
+  label,
+  value,
+  onValueChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onValueChange: (value: string) => void;
+  options: ReadonlyArray<{ value: string; label: string }>;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      <Select value={value} onValueChange={onValueChange}>
+        <SelectTrigger>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+async function getReportPage(input: {
+  reportKind: ReportKind;
+  from: string;
+  to: string;
+  status: string;
+  category: string;
+  serviceName: string;
+  limit: number;
+  offset: number;
+}) {
+  const { data, error } = await supabase.rpc("get_admin_report_page", {
+    p_report_kind: input.reportKind,
+    p_from: input.from,
+    p_to: input.to,
+    p_status: input.status === "all" ? null : input.status,
+    p_category: input.category === "all" ? null : input.category,
+    p_service_name: input.serviceName === "all" ? null : input.serviceName,
+    p_limit: input.limit,
+    p_offset: input.offset,
+  });
+  if (error) throw error;
+  return data as unknown as ReportPage;
+}
+
+async function getAllReportRows(
+  input: Omit<Parameters<typeof getReportPage>[0], "limit" | "offset">,
+) {
+  const limit = 250;
+  let offset = 0;
+  let first: ReportPage | null = null;
+  let rows: Array<BookingRow | ServiceRow> = [];
+  do {
+    const current = await getReportPage({ ...input, limit, offset });
+    first ??= current;
+    rows = rows.concat(current.rows);
+    offset += current.rows.length;
+  } while (first && offset < first.total);
+  return { rows, total: first?.total ?? 0, metrics: first?.metrics };
+}
+
+function makeExportData(
+  reportKind: ReportKind,
+  rows: Array<BookingRow | ServiceRow>,
+  metrics?: ReportMetrics,
+): ExportData {
+  if (reportKind === "services") {
+    const serviceRows = rows as ServiceRow[];
+    return {
+      headers: ["Reference", "Customer", "Date", "Status", "Service", "Category", "Value"],
+      rows: serviceRows.map((row) => [
+        row.reference_code,
+        row.customer_name,
+        formatDateLong(row.appointment_date),
+        statusLabel(row.status),
+        row.service_name,
+        row.category,
+        `PHP ${Number(row.price).toFixed(2)}`,
+      ]),
+      summary: [
+        `Service entries: ${serviceRows.length}`,
+        `Bookings served: ${metrics?.total_bookings ?? 0}`,
+        `Completed service entries: ${metrics?.completed_rows ?? 0}`,
+        `Completed service value: PHP ${Number(metrics?.completed_value ?? 0).toFixed(2)}`,
+      ],
+    };
+  }
+  const bookingRows = rows as BookingRow[];
+  const statusText =
+    Object.entries(metrics?.status_counts ?? {})
+      .map(([name, count]) => `${statusLabel(name)} ${count}`)
+      .join(", ") || "None";
+  return {
+    headers: ["Reference", "Customer", "Date", "Status", "Estimate"],
+    rows: bookingRows.map((row) => [
+      row.reference_code,
+      row.customer_name,
+      formatDateLong(row.appointment_date),
+      statusLabel(row.status),
+      `PHP ${Number(row.total_estimate).toFixed(2)}`,
+    ]),
+    summary: [
+      `Total bookings: ${metrics?.total_bookings ?? 0}`,
+      `Completed jobs: ${metrics?.completed_bookings ?? 0}`,
+      `Completed revenue: PHP ${Number(metrics?.completed_value ?? 0).toFixed(2)}`,
+      `Statuses: ${statusText}`,
+    ],
+  };
+}
+
+function periodRange(preset: Exclude<PeriodPreset, "custom">, today: string) {
+  if (preset === "this_week") {
+    const day = new Date(`${today}T00:00:00`).getDay();
+    return { from: addDays(today, -((day + 6) % 7)), to: today };
+  }
+  if (preset === "this_year") return { from: `${today.slice(0, 4)}-01-01`, to: today };
+  return { from: `${today.slice(0, 8)}01`, to: today };
+}
+
+function exportCsv(data: ExportData, reportKind: ReportKind, from: string, to: string) {
+  const lines = data.rows.map((row) =>
+    row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(","),
+  );
+  downloadBlob(
+    [data.headers.join(","), ...lines].join("\n"),
+    `fake-rider-${fileName(reportKind)}-${from}-to-${to}.csv`,
+    "text/csv;charset=utf-8;",
+  );
+}
+
+async function exportPdf(
+  data: ExportData,
+  reportKind: ReportKind,
+  title: string,
+  scope: string,
+  from: string,
+  to: string,
+) {
+  const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+    import("jspdf"),
+    import("jspdf-autotable"),
+  ]);
+  const doc = new jsPDF({ orientation: reportKind === "services" ? "landscape" : "portrait" });
+  const logo = await getShopLogoDataUrl();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  doc.setFontSize(16);
+  const logoSize = 24;
+  const gap = 6;
+  const startX = (pageWidth - logoSize - gap - doc.getTextWidth(SHOP_EXPORT_NAME)) / 2;
+  doc.addImage(logo, "PNG", startX, 10, logoSize, logoSize);
+  doc.text(SHOP_EXPORT_NAME, startX + logoSize + gap, 26);
+  doc.setFontSize(11);
+  doc.text(title.toUpperCase(), 14, 54);
+  doc.setFontSize(9);
+  doc.text(`Generated: ${formatBusinessTimestamp()}`, 14, 60);
+  const scopeLines = doc.splitTextToSize(`Scope: ${scope}`, pageWidth - 28);
+  doc.text(scopeLines, 14, 66);
+  const summaryY = 66 + scopeLines.length * 5 + 4;
+  doc.setFontSize(10);
+  data.summary.forEach((line, index) => doc.text(line, 14, summaryY + index * 6));
+  autoTable(doc, {
+    startY: summaryY + data.summary.length * 6 + 4,
+    head: [data.headers],
+    body: data.rows,
+    theme: "grid",
+    margin: { bottom: 48 },
+    styles: { fontSize: 8 },
+    headStyles: { fillColor: [220, 220, 220], textColor: [0, 0, 0] },
+  });
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const signatureY = pageHeight - 29;
+  doc.setPage(doc.getNumberOfPages());
+  doc.setDrawColor(80);
+  doc.line(pageWidth - 78, signatureY, pageWidth - 14, signatureY);
+  doc.setFontSize(10);
+  doc.text(SHOP_OWNER_NAME, pageWidth - 46, signatureY + 6, { align: "center" });
+  doc.setFontSize(8);
+  doc.text("Shop Owner", pageWidth - 46, signatureY + 11, { align: "center" });
+  doc.text("Signature over printed name", pageWidth - 46, signatureY - 3, { align: "center" });
+  doc.save(`fake-rider-${fileName(reportKind)}-${from}-to-${to}.pdf`);
+}
+
+function downloadBlob(contents: string, filename: string, type: string) {
+  const url = URL.createObjectURL(new Blob([contents], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+function fileName(reportKind: ReportKind) {
+  return reportKind === "services" ? "service-activity-report" : "booking-volume-report";
+}
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <Card className="border-border/70 bg-card/60">
       <CardContent className="p-5">
-        <p className="text-xs tracking-widest text-muted-foreground uppercase">{label}</p>
-        <p className="mt-1 font-display text-2xl">{value}</p>
+        <p className="text-xs tracking-wider text-muted-foreground uppercase">{label}</p>
+        <p className="mt-2 font-display text-2xl text-primary">{value}</p>
       </CardContent>
     </Card>
   );

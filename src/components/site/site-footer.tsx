@@ -65,7 +65,7 @@ export function SiteFooter() {
               Parts & Accessories
             </Link>
             <Link to="/auth" className="hover:text-foreground">
-              Staff login
+              Admin login
             </Link>
           </div>
         </div>

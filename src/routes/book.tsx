@@ -816,8 +816,8 @@ function BookPage() {
 
           <div
             className={cn(
-              "hidden flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card/60 p-5 md:flex",
-              mobileStep === 6 && "flex",
+              "flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card/60 p-5",
+              mobileStep !== 6 && "hidden md:flex",
             )}
           >
             <div>

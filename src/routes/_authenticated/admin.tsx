@@ -8,6 +8,7 @@ import {
   CalendarDays,
   CalendarX,
   ClipboardList,
+  History,
   LayoutDashboard,
   LogOut,
   Package,
@@ -35,6 +36,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { supabase } from "@/integrations/supabase/client";
+import { recordAdminActivityEvent } from "@/lib/admin-activity";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   component: AdminLayout,
@@ -80,6 +82,7 @@ const groups = [
     items: [
       { title: "Reports", url: "/admin/reports", icon: ClipboardList },
       { title: "Archive", url: "/admin/archive", icon: Archive },
+      { title: "Activity Log", url: "/admin/activity-log", icon: History },
     ],
   },
 ];
@@ -124,6 +127,16 @@ function AdminLayout() {
   }, [queryClient]);
 
   async function signOut() {
+    try {
+      await recordAdminActivityEvent({
+        action: "signed out",
+        resourceType: "Authentication",
+        targetLabel: "Admin console",
+        summary: "Administrator signed out of the admin console.",
+      });
+    } catch {
+      // Sign-out should always complete, even if the audit service is unavailable.
+    }
     await queryClient.cancelQueries();
     queryClient.clear();
     await supabase.auth.signOut();

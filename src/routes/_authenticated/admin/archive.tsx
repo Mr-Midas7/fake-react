@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { RotateCcw, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/page-header";
+import { PaginationControls } from "@/components/admin/pagination-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,103 +38,155 @@ export const Route = createFileRoute("/_authenticated/admin/archive")({
 });
 
 function ArchivePage() {
+  const pageSize = 25;
   const queryClient = useQueryClient();
   const [term, setTerm] = useState("");
   const [activeTab, setActiveTab] = useState("appointments");
+  const [page, setPage] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; type: string } | null>(null);
+  const deferredTerm = useDeferredValue(term);
+  const searchTerm = cleanSearchTerm(deferredTerm);
 
   const archived = useQuery({
-    queryKey: ["archived-appointments"],
+    queryKey: ["archived-appointments", { searchTerm, page }],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("appointments")
-        .select("*")
+        .select("*", { count: "exact" })
         .eq("is_archived", true)
         .order("appointment_date", { ascending: false });
+      if (searchTerm)
+        query = query.or(
+          `reference_code.ilike.%${searchTerm}%,customer_name.ilike.%${searchTerm}%,phone.ilike.%${searchTerm}%,plate_number.ilike.%${searchTerm}%`,
+        );
+      const { data, error, count } = await query.range(
+        page * pageSize,
+        page * pageSize + pageSize - 1,
+      );
       if (error) throw error;
-      return data;
+      return { rows: data ?? [], total: count ?? 0 };
     },
+    enabled: activeTab === "appointments",
   });
 
   const archivedServices = useQuery({
-    queryKey: ["archived-services"],
+    queryKey: ["archived-services", { searchTerm, page }],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("services")
-        .select("*")
+        .select("*", { count: "exact" })
         .eq("is_archived", true)
         .order("sort_order");
+      if (searchTerm) query = query.ilike("name", `%${searchTerm}%`);
+      const { data, error, count } = await query.range(
+        page * pageSize,
+        page * pageSize + pageSize - 1,
+      );
       if (error) throw error;
-      return Array.from(new Map((data ?? []).map((s) => [s.name.trim(), s])).values());
+      return { rows: data ?? [], total: count ?? 0 };
     },
+    enabled: activeTab === "services",
   });
 
   const archivedProducts = useQuery({
-    queryKey: ["archived-products"],
+    queryKey: ["archived-products", { searchTerm, page }],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("products")
-        .select("*")
+        .select("*", { count: "exact" })
         .in("category", ["part", "accessory"])
         .eq("is_archived", true)
         .order("sort_order");
+      if (searchTerm) query = query.or(`name.ilike.%${searchTerm}%,brand.ilike.%${searchTerm}%`);
+      const { data, error, count } = await query.range(
+        page * pageSize,
+        page * pageSize + pageSize - 1,
+      );
       if (error) throw error;
-      return Array.from(new Map((data ?? []).map((p) => [p.name.trim(), p])).values());
+      return { rows: data ?? [], total: count ?? 0 };
     },
+    enabled: activeTab === "products",
   });
 
   const archivedMotorcycles = useQuery({
-    queryKey: ["archived-motorcycles"],
+    queryKey: ["archived-motorcycles", { searchTerm, page }],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("products")
-        .select("*")
+        .select("*", { count: "exact" })
         .eq("category", "motorcycle")
         .eq("is_archived", true)
         .order("brand")
         .order("name");
+      if (searchTerm) query = query.or(`name.ilike.%${searchTerm}%,brand.ilike.%${searchTerm}%`);
+      const { data, error, count } = await query.range(
+        page * pageSize,
+        page * pageSize + pageSize - 1,
+      );
       if (error) throw error;
-      return Array.from(new Map((data ?? []).map((p) => [p.name.trim(), p])).values());
+      return { rows: data ?? [], total: count ?? 0 };
     },
+    enabled: activeTab === "motorcycles",
   });
 
   const archivedCrew = useQuery({
-    queryKey: ["archived-crew"],
+    queryKey: ["archived-crew", { searchTerm, page }],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("crew_members")
-        .select("*")
+        .select("*", { count: "exact" })
         .eq("is_archived", true)
         .order("name");
+      if (searchTerm)
+        query = query.or(
+          `name.ilike.%${searchTerm}%,role.ilike.%${searchTerm}%,phone.ilike.%${searchTerm}%`,
+        );
+      const { data, error, count } = await query.range(
+        page * pageSize,
+        page * pageSize + pageSize - 1,
+      );
       if (error) throw error;
-      return Array.from(new Map((data ?? []).map((c) => [c.name.trim(), c])).values());
+      return { rows: data ?? [], total: count ?? 0 };
     },
+    enabled: activeTab === "crew",
   });
 
   const archivedBlocks = useQuery({
-    queryKey: ["archived-blocks"],
+    queryKey: ["archived-blocks", { searchTerm, page }],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("schedule_blocks")
-        .select("*")
+        .select("*", { count: "exact" })
         .eq("is_active", false)
         .order("block_date", { ascending: false });
+      if (searchTerm) query = query.ilike("reason", `%${searchTerm}%`);
+      const { data, error, count } = await query.range(
+        page * pageSize,
+        page * pageSize + pageSize - 1,
+      );
       if (error) throw error;
-      return data;
+      return { rows: data ?? [], total: count ?? 0 };
     },
+    enabled: activeTab === "blocks",
   });
 
   const archivedBlockedNumbers = useQuery({
-    queryKey: ["archived-blocked-numbers"],
+    queryKey: ["archived-blocked-numbers", { searchTerm, page }],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("blocked_numbers")
-        .select("*")
+        .select("*", { count: "exact" })
         .eq("is_archived", true)
         .order("created_at", { ascending: false });
+      if (searchTerm) query = query.or(`phone.ilike.%${searchTerm}%,reason.ilike.%${searchTerm}%`);
+      const { data, error, count } = await query.range(
+        page * pageSize,
+        page * pageSize + pageSize - 1,
+      );
       if (error) throw error;
-      return data ?? [];
+      return { rows: data ?? [], total: count ?? 0 };
     },
+    enabled: activeTab === "blocked-numbers",
   });
 
   const restoreAppointment = useMutation({
@@ -293,43 +346,26 @@ function ArchivePage() {
     },
   });
 
-  const appointmentRows = (archived.data ?? []).filter((a) => {
-    if (term.trim() === "") return true;
-    return `${a.reference_code} ${a.customer_name} ${a.phone} ${a.plate_number}`
-      .toLowerCase()
-      .includes(term.toLowerCase());
-  });
+  useEffect(() => {
+    setPage(0);
+  }, [activeTab, term]);
 
-  const serviceRows = (archivedServices.data ?? []).filter((s) => {
-    if (term.trim() === "") return true;
-    return `${s.name}`.toLowerCase().includes(term.toLowerCase());
-  });
-
-  const productRows = (archivedProducts.data ?? []).filter((p) => {
-    if (term.trim() === "") return true;
-    return `${p.name} ${p.brand ?? ""}`.toLowerCase().includes(term.toLowerCase());
-  });
-
-  const motorcycleRows = (archivedMotorcycles.data ?? []).filter((p) => {
-    if (term.trim() === "") return true;
-    return `${p.brand ?? ""} ${p.name}`.toLowerCase().includes(term.toLowerCase());
-  });
-  const crewRows = (archivedCrew.data ?? []).filter((c) => {
-    if (term.trim() === "") return true;
-    return `${c.name} ${c.role} ${c.phone ?? ""}`.toLowerCase().includes(term.toLowerCase());
-  });
-
-  const blockRows = (archivedBlocks.data ?? []).filter((b) => {
-    if (term.trim() === "") return true;
-    return `${b.block_date} ${b.reason ?? ""}`.toLowerCase().includes(term.toLowerCase());
-  });
-
-  const blockedNumberRows = (archivedBlockedNumbers.data ?? []).filter((blockedNumber) => {
-    if (term.trim() === "") return true;
-    return `${blockedNumber.phone} ${blockedNumber.reason ?? ""}`
-      .toLowerCase()
-      .includes(term.toLowerCase());
-  });
+  const appointmentRows = archived.data?.rows ?? [];
+  const serviceRows = archivedServices.data?.rows ?? [];
+  const productRows = archivedProducts.data?.rows ?? [];
+  const motorcycleRows = archivedMotorcycles.data?.rows ?? [];
+  const crewRows = archivedCrew.data?.rows ?? [];
+  const blockRows = archivedBlocks.data?.rows ?? [];
+  const blockedNumberRows = archivedBlockedNumbers.data?.rows ?? [];
+  const activeArchive = {
+    appointments: archived.data,
+    services: archivedServices.data,
+    products: archivedProducts.data,
+    motorcycles: archivedMotorcycles.data,
+    crew: archivedCrew.data,
+    blocks: archivedBlocks.data,
+    "blocked-numbers": archivedBlockedNumbers.data,
+  }[activeTab];
 
   const confirmDelete = (id: string, type: string) => {
     setDeleteTarget({ id, type });
@@ -347,6 +383,12 @@ function ArchivePage() {
         title="Archive"
         description="Archived bookings, services, products, crew, schedule blocks, and blocked numbers. Restore them or delete permanently."
       />
+      <Input
+        value={term}
+        onChange={(event) => setTerm(event.target.value)}
+        placeholder="Search the selected archive"
+        className="mb-4 max-w-xs"
+      />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <div className="overflow-x-auto overflow-y-visible">
@@ -360,13 +402,6 @@ function ArchivePage() {
             <TabsTrigger value="blocked-numbers">Blocked Numbers</TabsTrigger>
           </TabsList>
         </div>
-
-        <Input
-          value={term}
-          onChange={(e) => setTerm(e.target.value)}
-          placeholder="Search..."
-          className="mb-4 max-w-sm"
-        />
 
         <TabsContent value="appointments">
           <Card className="border-border/70 bg-card/60">
@@ -786,6 +821,12 @@ function ArchivePage() {
           </Card>
         </TabsContent>
       </Tabs>
+      <PaginationControls
+        page={page}
+        pageSize={pageSize}
+        total={activeArchive?.total ?? 0}
+        onPageChange={setPage}
+      />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
@@ -808,4 +849,11 @@ function ArchivePage() {
       </AlertDialog>
     </div>
   );
+}
+
+function cleanSearchTerm(value: string) {
+  return value
+    .trim()
+    .replace(/[,%_()]/g, " ")
+    .replace(/\s+/g, " ");
 }
