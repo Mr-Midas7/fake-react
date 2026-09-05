@@ -5,6 +5,7 @@ import { useDeferredValue, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/page-header";
+import { ActiveFilterChips } from "@/components/admin/active-filter-chips";
 import { PaginationControls } from "@/components/admin/pagination-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -389,6 +390,15 @@ function ArchivePage() {
         placeholder="Search the selected archive"
         className="mb-4 max-w-xs"
       />
+      <ActiveFilterChips
+        filters={
+          term.trim() ? [{ label: "Search", value: term.trim(), onClear: () => setTerm("") }] : []
+        }
+        onReset={() => {
+          setTerm("");
+          setPage(0);
+        }}
+      />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <div className="overflow-x-auto overflow-y-visible">
@@ -406,7 +416,7 @@ function ArchivePage() {
         <TabsContent value="appointments">
           <Card className="border-border/70 bg-card/60">
             <CardContent className="overflow-x-auto p-0">
-              <Table>
+              <Table className="admin-data-table">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Reference</TableHead>
@@ -420,20 +430,22 @@ function ArchivePage() {
                 <TableBody>
                   {appointmentRows.map((a) => (
                     <TableRow key={a.id}>
-                      <TableCell className="font-mono text-xs">{a.reference_code}</TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell data-label="Reference" className="font-mono text-xs">
+                        {a.reference_code}
+                      </TableCell>
+                      <TableCell data-label="Customer" className="text-sm">
                         {a.customer_name}
                         <span className="block text-xs text-muted-foreground">
                           {a.moto_brand} {a.moto_model} · {a.plate_number}
                         </span>
                       </TableCell>
-                      <TableCell className="text-xs">
+                      <TableCell data-label="Schedule" className="text-xs">
                         {formatDateLong(a.appointment_date)}
                         <span className="block text-muted-foreground">
                           {formatTime(String(a.start_time).slice(0, 5))}
                         </span>
                       </TableCell>
-                      <TableCell>
+                      <TableCell data-label="Status">
                         <Badge
                           variant="outline"
                           className={cn("text-[10px] uppercase", statusTone(a.status))}
@@ -441,8 +453,10 @@ function ArchivePage() {
                           {statusLabel(a.status)}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-sm">{formatPHP(a.total_estimate)}</TableCell>
-                      <TableCell className="flex justify-end gap-2 text-right">
+                      <TableCell data-label="Estimate" className="text-sm">
+                        {formatPHP(a.total_estimate)}
+                      </TableCell>
+                      <TableCell data-label="Actions" className="flex justify-end gap-2 text-right">
                         <Button
                           size="sm"
                           variant="outline"
@@ -479,7 +493,7 @@ function ArchivePage() {
         <TabsContent value="services">
           <Card className="border-border/70 bg-card/60">
             <CardContent className="overflow-x-auto p-0">
-              <Table>
+              <Table className="admin-data-table">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Service</TableHead>
@@ -492,13 +506,19 @@ function ArchivePage() {
                 <TableBody>
                   {serviceRows.map((s) => (
                     <TableRow key={s.id}>
-                      <TableCell className="text-sm font-medium">{s.name}</TableCell>
-                      <TableCell className="text-sm">{s.duration_minutes} mins</TableCell>
-                      <TableCell className="text-sm text-primary">{formatPHP(s.price)}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
+                      <TableCell data-label="Service" className="text-sm font-medium">
+                        {s.name}
+                      </TableCell>
+                      <TableCell data-label="Duration" className="text-sm">
+                        {s.duration_minutes} mins
+                      </TableCell>
+                      <TableCell data-label="Price" className="text-sm text-primary">
+                        {formatPHP(s.price)}
+                      </TableCell>
+                      <TableCell data-label="Description" className="text-xs text-muted-foreground">
                         {s.description ?? "-"}
                       </TableCell>
-                      <TableCell className="flex justify-end gap-2 text-right">
+                      <TableCell data-label="Actions" className="flex justify-end gap-2 text-right">
                         <Button
                           size="sm"
                           variant="outline"
@@ -537,7 +557,7 @@ function ArchivePage() {
         <TabsContent value="products">
           <Card className="border-border/70 bg-card/60">
             <CardContent className="overflow-x-auto p-0">
-              <Table>
+              <Table className="admin-data-table">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Item</TableHead>
@@ -550,16 +570,22 @@ function ArchivePage() {
                 <TableBody>
                   {productRows.map((p) => (
                     <TableRow key={p.id}>
-                      <TableCell>
+                      <TableCell data-label="Item">
                         <span className="block text-sm">{p.name}</span>
                         <span className="text-xs text-muted-foreground capitalize">
                           {p.category}
                         </span>
                       </TableCell>
-                      <TableCell className="text-sm">{p.brand ?? "-"}</TableCell>
-                      <TableCell className="text-sm text-primary">{formatPHP(p.price)}</TableCell>
-                      <TableCell className="text-sm capitalize">{p.category}</TableCell>
-                      <TableCell className="flex justify-end gap-2 text-right">
+                      <TableCell data-label="Brand" className="text-sm">
+                        {p.brand ?? "-"}
+                      </TableCell>
+                      <TableCell data-label="Price" className="text-sm text-primary">
+                        {formatPHP(p.price)}
+                      </TableCell>
+                      <TableCell data-label="Category" className="text-sm capitalize">
+                        {p.category}
+                      </TableCell>
+                      <TableCell data-label="Actions" className="flex justify-end gap-2 text-right">
                         <Button
                           size="sm"
                           variant="outline"
@@ -598,7 +624,7 @@ function ArchivePage() {
         <TabsContent value="motorcycles">
           <Card className="border-border/70 bg-card/60">
             <CardContent className="overflow-x-auto p-0">
-              <Table>
+              <Table className="admin-data-table">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Model</TableHead>
@@ -609,9 +635,13 @@ function ArchivePage() {
                 <TableBody>
                   {motorcycleRows.map((p) => (
                     <TableRow key={p.id}>
-                      <TableCell className="text-sm font-medium">{p.name}</TableCell>
-                      <TableCell className="text-sm">{p.brand ?? "-"}</TableCell>
-                      <TableCell className="flex justify-end gap-2 text-right">
+                      <TableCell data-label="Model" className="text-sm font-medium">
+                        {p.name}
+                      </TableCell>
+                      <TableCell data-label="Brand" className="text-sm">
+                        {p.brand ?? "-"}
+                      </TableCell>
+                      <TableCell data-label="Actions" className="flex justify-end gap-2 text-right">
                         <Button
                           size="sm"
                           variant="outline"
@@ -650,7 +680,7 @@ function ArchivePage() {
         <TabsContent value="crew">
           <Card className="border-border/70 bg-card/60">
             <CardContent className="overflow-x-auto p-0">
-              <Table>
+              <Table className="admin-data-table">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Name</TableHead>
@@ -662,10 +692,16 @@ function ArchivePage() {
                 <TableBody>
                   {crewRows.map((c) => (
                     <TableRow key={c.id}>
-                      <TableCell className="text-sm">{c.name}</TableCell>
-                      <TableCell className="text-sm">{c.role}</TableCell>
-                      <TableCell className="text-sm">{c.phone ?? "-"}</TableCell>
-                      <TableCell className="flex justify-end gap-2 text-right">
+                      <TableCell data-label="Name" className="text-sm">
+                        {c.name}
+                      </TableCell>
+                      <TableCell data-label="Role" className="text-sm">
+                        {c.role}
+                      </TableCell>
+                      <TableCell data-label="Phone" className="text-sm">
+                        {c.phone ?? "-"}
+                      </TableCell>
+                      <TableCell data-label="Actions" className="flex justify-end gap-2 text-right">
                         <Button
                           size="sm"
                           variant="outline"
@@ -704,7 +740,7 @@ function ArchivePage() {
         <TabsContent value="blocks">
           <Card className="border-border/70 bg-card/60">
             <CardContent className="overflow-x-auto p-0">
-              <Table>
+              <Table className="admin-data-table">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date</TableHead>
@@ -716,14 +752,16 @@ function ArchivePage() {
                 <TableBody>
                   {blockRows.map((b) => (
                     <TableRow key={b.id}>
-                      <TableCell className="text-sm">{formatDateLong(b.block_date)}</TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell data-label="Date" className="text-sm">
+                        {formatDateLong(b.block_date)}
+                      </TableCell>
+                      <TableCell data-label="Slot" className="text-sm">
                         {b.start_time ? formatTime(String(b.start_time).slice(0, 5)) : "Whole day"}
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
+                      <TableCell data-label="Reason" className="text-sm text-muted-foreground">
                         {b.reason ?? "-"}
                       </TableCell>
-                      <TableCell className="flex justify-end gap-2 text-right">
+                      <TableCell data-label="Actions" className="flex justify-end gap-2 text-right">
                         <Button
                           size="sm"
                           variant="outline"
@@ -762,7 +800,7 @@ function ArchivePage() {
         <TabsContent value="blocked-numbers">
           <Card className="border-border/70 bg-card/60">
             <CardContent className="overflow-x-auto p-0">
-              <Table>
+              <Table className="admin-data-table">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Phone</TableHead>
@@ -774,18 +812,20 @@ function ArchivePage() {
                 <TableBody>
                   {blockedNumberRows.map((blockedNumber) => (
                     <TableRow key={blockedNumber.id}>
-                      <TableCell className="font-mono text-sm">{blockedNumber.phone}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
+                      <TableCell data-label="Phone" className="font-mono text-sm">
+                        {blockedNumber.phone}
+                      </TableCell>
+                      <TableCell data-label="Reason" className="text-sm text-muted-foreground">
                         {blockedNumber.reason ?? "-"}
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell data-label="Blocked on" className="text-sm">
                         {new Date(blockedNumber.created_at).toLocaleDateString("en-PH", {
                           year: "numeric",
                           month: "short",
                           day: "numeric",
                         })}
                       </TableCell>
-                      <TableCell className="flex justify-end gap-2 text-right">
+                      <TableCell data-label="Actions" className="flex justify-end gap-2 text-right">
                         <Button
                           size="sm"
                           variant="outline"

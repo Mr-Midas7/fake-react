@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/page-header";
+import { ActiveFilterChips } from "@/components/admin/active-filter-chips";
 import { PaginationControls } from "@/components/admin/pagination-controls";
 import {
   AlertDialog,
@@ -188,6 +189,41 @@ function ReportsPage() {
     setTo(range.to);
   }
 
+  const activeFilters = [
+    ...(reportKind !== "bookings"
+      ? [{ label: "Report", value: "Service activity", onClear: () => setReportKind("bookings") }]
+      : []),
+    ...(periodPreset === "custom"
+      ? [
+          {
+            label: "Period",
+            value: `${formatDateLong(from)} to ${formatDateLong(to)}`,
+            onClear: () => updatePeriod("this_month"),
+          },
+        ]
+      : []),
+    ...(category !== "all"
+      ? [{ label: "Category", value: category, onClear: () => setCategory("all") }]
+      : []),
+    ...(serviceName !== "all"
+      ? [{ label: "Service", value: serviceName, onClear: () => setServiceName("all") }]
+      : []),
+    ...(status !== "all"
+      ? [{ label: "Status", value: statusLabel(status), onClear: () => setStatus("all") }]
+      : []),
+  ];
+
+  function resetFilters() {
+    setReportKind("bookings");
+    setPeriodPreset("this_month");
+    setFrom(initialRange.from);
+    setTo(initialRange.to);
+    setCategory("all");
+    setServiceName("all");
+    setStatus("all");
+    setPage(0);
+  }
+
   async function confirmExport() {
     if (!pendingExport) return;
     try {
@@ -321,6 +357,7 @@ function ReportsPage() {
           )}
         </CardContent>
       </Card>
+      <ActiveFilterChips filters={activeFilters} onReset={resetFilters} />
 
       <div className="mb-6 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
         <Badge variant="outline">{reportTitle}</Badge>
@@ -367,7 +404,7 @@ function ReportsPage() {
             <div className="border-b border-border px-5 py-3 text-sm text-muted-foreground">
               Preview: {preview.rows.length} of {data.data?.total ?? 0} {rowLabel}
             </div>
-            <Table>
+            <Table className="admin-data-table">
               <TableHeader>
                 <TableRow>
                   {preview.headers.map((header) => (
@@ -379,7 +416,11 @@ function ReportsPage() {
                 {preview.rows.map((row, index) => (
                   <TableRow key={`${row[0]}-${row[4] ?? ""}-${index}`}>
                     {row.map((cell, cellIndex) => (
-                      <TableCell key={`${cellIndex}-${cell}`} className="whitespace-nowrap text-sm">
+                      <TableCell
+                        key={`${cellIndex}-${cell}`}
+                        data-label={preview.headers[cellIndex]}
+                        className="whitespace-nowrap text-sm"
+                      >
                         {cell}
                       </TableCell>
                     ))}

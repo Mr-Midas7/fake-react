@@ -7,6 +7,7 @@ import { z } from "zod";
 import { format } from "date-fns";
 
 import { PageHeader } from "@/components/admin/page-header";
+import { ActiveFilterChips } from "@/components/admin/active-filter-chips";
 import { PaginationControls } from "@/components/admin/pagination-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -155,7 +156,33 @@ function AppointmentsPage() {
     setPage(0);
   }, [focusedAppointmentId]);
 
+  useEffect(() => {
+    setPage(0);
+  }, [selectedDate, status, term]);
+
   const rows = appointments.data?.rows ?? [];
+  const activeFilters = [
+    ...(term.trim() ? [{ label: "Search", value: term.trim(), onClear: () => setTerm("") }] : []),
+    ...(status !== "all"
+      ? [{ label: "Status", value: statusLabel(status), onClear: () => setStatus("all") }]
+      : []),
+    ...(appointmentDate
+      ? [
+          {
+            label: "Date",
+            value: formatDateLong(selectedDate),
+            onClear: () => setAppointmentDate(undefined),
+          },
+        ]
+      : []),
+  ];
+
+  function resetFilters() {
+    setTerm("");
+    setStatus("all");
+    setAppointmentDate(undefined);
+    setPage(0);
+  }
 
   return (
     <div>
@@ -250,10 +277,11 @@ function AppointmentsPage() {
           </Button>
         )}
       </div>
+      <ActiveFilterChips filters={activeFilters} onReset={resetFilters} />
 
       <Card className="border-border/70 bg-card/60">
         <CardContent className="overflow-x-auto p-0">
-          <Table>
+          <Table className="admin-data-table">
             <TableHeader>
               <TableRow>
                 <TableHead>Reference</TableHead>
@@ -272,30 +300,32 @@ function AppointmentsPage() {
                     className="cursor-pointer"
                     onClick={() => setOpenId(openId === a.id ? null : a.id)}
                   >
-                    <TableCell className="font-mono text-xs">{a.reference_code}</TableCell>
-                    <TableCell>
+                    <TableCell data-label="Reference" className="font-mono text-xs">
+                      {a.reference_code}
+                    </TableCell>
+                    <TableCell data-label="Customer">
                       <span className="block text-sm">{a.customer_name}</span>
                       <span className="text-xs text-muted-foreground">{a.phone}</span>
                     </TableCell>
-                    <TableCell className="text-xs">
+                    <TableCell data-label="Motorcycle" className="text-xs">
                       {a.moto_brand} {a.moto_model} {a.moto_variant ?? ""} {a.moto_year ?? ""}
                       <span className="block text-muted-foreground">{a.plate_number}</span>
                     </TableCell>
-                    <TableCell className="text-xs">
+                    <TableCell data-label="Schedule" className="text-xs">
                       {formatDateLong(a.appointment_date)}
                       <span className="block text-muted-foreground">
                         {formatTime(String(a.start_time).slice(0, 5))}
                       </span>
                     </TableCell>
-                    <TableCell className="text-sm text-primary">
+                    <TableCell data-label="Total" className="text-sm text-primary">
                       {formatPHP(a.total_estimate)}
                     </TableCell>
-                    <TableCell>
+                    <TableCell data-label="Status">
                       <Badge variant="outline" className={cn("uppercase", statusTone(a.status))}>
                         {statusLabel(a.status)}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell data-label="Actions" className="text-right">
                       <Button
                         size="sm"
                         variant="ghost"

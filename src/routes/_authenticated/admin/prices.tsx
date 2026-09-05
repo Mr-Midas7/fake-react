@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
-import { formatPHP } from "@/lib/shop";
+import { activeStatusTone, formatPHP } from "@/lib/shop";
 
 export const Route = createFileRoute("/_authenticated/admin/prices")({
   component: PricesPage,
@@ -231,7 +231,7 @@ function PriceTable({
                   </>
                 )}
                 <TableCell>
-                  <Badge variant="outline" className="uppercase">
+                  <Badge variant="outline" className={`uppercase ${activeStatusTone(r.is_active)}`}>
                     {r.is_active ? "Active" : "Deactivated"}
                   </Badge>
                 </TableCell>

@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
 import {
+  activeStatusTone,
   PHONE_VALIDATION_MESSAGE,
   normalizePhilippineMobile,
   sanitizePhilippineMobileInput,
@@ -143,10 +144,10 @@ function MechanicsPage() {
     },
   });
 
-  const getStatus = (c: CrewMember) => {
-    if (!c.is_active) return { label: "Deactivated", tone: "bg-muted text-muted-foreground" };
-    return { label: "Active", tone: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" };
-  };
+  const getStatus = (c: CrewMember) => ({
+    label: c.is_active ? "Active" : "Deactivated",
+    tone: activeStatusTone(c.is_active),
+  });
 
   const handleSave = async () => {
     if (form.name.trim().length < 2) {
@@ -244,7 +245,7 @@ function MechanicsPage() {
 
       <Card className="border-border/70 bg-card/60">
         <CardContent className="overflow-x-auto p-0">
-          <Table>
+          <Table className="admin-data-table">
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
@@ -267,15 +268,21 @@ function MechanicsPage() {
                   const status = getStatus(c);
                   return (
                     <TableRow key={c.id}>
-                      <TableCell className="text-sm">{c.name}</TableCell>
-                      <TableCell className="text-sm">{c.role}</TableCell>
-                      <TableCell className="text-sm">{c.phone ?? "-"}</TableCell>
-                      <TableCell>
+                      <TableCell data-label="Name" className="text-sm">
+                        {c.name}
+                      </TableCell>
+                      <TableCell data-label="Role" className="text-sm">
+                        {c.role}
+                      </TableCell>
+                      <TableCell data-label="Phone" className="text-sm">
+                        {c.phone ?? "-"}
+                      </TableCell>
+                      <TableCell data-label="Status">
                         <Badge variant="outline" className={`text-[10px] uppercase ${status.tone}`}>
                           {status.label}
                         </Badge>
                       </TableCell>
-                      <TableCell>
+                      <TableCell data-label="Active">
                         <Switch
                           checked={c.is_active}
                           onCheckedChange={(v) =>
@@ -283,7 +290,7 @@ function MechanicsPage() {
                           }
                         />
                       </TableCell>
-                      <TableCell className="space-x-1 text-right">
+                      <TableCell data-label="Actions" className="space-x-1 text-right">
                         <Button
                           size="sm"
                           variant="ghost"

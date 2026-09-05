@@ -43,6 +43,8 @@ export type Database = {
           changed_fields: string[];
           created_at: string;
           id: string;
+          ip_address: string | null;
+          record_id: string | null;
           resource_type: string;
           summary: string;
           target_label: string;
@@ -56,6 +58,8 @@ export type Database = {
           changed_fields?: string[];
           created_at?: string;
           id?: string;
+          ip_address?: string | null;
+          record_id?: string | null;
           resource_type: string;
           summary: string;
           target_label: string;
@@ -69,6 +73,8 @@ export type Database = {
           changed_fields?: string[];
           created_at?: string;
           id?: string;
+          ip_address?: string | null;
+          record_id?: string | null;
           resource_type?: string;
           summary?: string;
           target_label?: string;

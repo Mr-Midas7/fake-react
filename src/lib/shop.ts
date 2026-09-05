@@ -5,8 +5,8 @@ export const SHOP = {
   tagline: "Motorparts, Accessories & Race-Grade Service",
   address: "Purok Bangkal Sta. Cruz, Baclayon, Bohol, Philippines",
   hours: "Monday to Saturday, 8:00 AM - 5:00 PM",
-  phone: "0917 000 0000",
-  email: "hello@fakerider.ph",
+  phone: "0916 126 3317",
+  email: "joemartato4@gmail.com",
   facebook: "https://www.facebook.com/profile.php?id=100082988659961",
   messenger: "https://www.facebook.com/messages/t/101547759281909/",
   noticeHours: 48,
@@ -47,6 +47,13 @@ export function statusTone(status: string) {
     default:
       return "bg-muted text-muted-foreground border-border";
   }
+}
+
+/** Shared display treatment for records that can be enabled or deactivated. */
+export function activeStatusTone(isActive: boolean) {
+  return isActive
+    ? "border-emerald-500/45 bg-emerald-500/20 text-emerald-300"
+    : "border-border bg-muted text-muted-foreground";
 }
 
 export function formatPHP(value: number | string | null | undefined) {

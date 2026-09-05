@@ -58,7 +58,7 @@ function unavailableAvailability(from: string, to: string, error: string) {
     from,
     to,
     error,
-    totalDurationMinutes: 75,
+    totalDurationMinutes: 90,
     dates: [],
     fullyBookedDates: [],
     slotsByDate: {},
@@ -277,10 +277,11 @@ export const getAvailability = createServerFn({ method: "GET" })
       );
     }
 
-    // Each selected service reserves its own 15-minute cleanup / handoff buffer.
+    // Reserve one 15-minute arrival buffer and one 15-minute post-service
+    // buffer around the complete selected-service duration.
     const totalDuration = (servicesRes.data ?? []).reduce(
-      (sum, service) => sum + (service.duration_minutes ?? 60) + 15,
-      0,
+      (sum, service) => sum + (service.duration_minutes ?? 60),
+      30,
     );
 
     const assignments: {
@@ -306,7 +307,7 @@ export const getAvailability = createServerFn({ method: "GET" })
     return buildPublicAvailability({
       from,
       to,
-      totalDurationMinutes: totalDuration || 75,
+      totalDurationMinutes: totalDuration || 90,
       slots: buildBookingTimeSlots(capacityConfig),
       blocks: (blocksRes.data ?? []).map((b) => {
         const { endTime, userReason } = decodeBlockReason(b.reason);
@@ -318,8 +319,9 @@ export const getAvailability = createServerFn({ method: "GET" })
         };
       }),
       assignments,
-      schedules: schedulesRes.data ?? [],
-      activeCrewIds: (activeCrewRes.data ?? []).map((crew) => crew.id),
+      schedules: (schedulesRes.data ?? []).filter((schedule) =>
+        (activeCrewRes.data ?? []).some((crew) => crew.id === schedule.crew_id),
+      ),
       exceptions: exceptionsRes.data ?? [],
     });
   });
@@ -422,7 +424,7 @@ export const createBooking = createServerFn({ method: "POST" })
       };
     }
 
-    // --- Fetch services to calculate service duration + buffer per service ---
+    // --- Fetch services to calculate the service duration and two booking buffers ---
     const services = await supabaseAdmin
       .from("services")
       .select("id,name,price,duration_minutes")
@@ -438,8 +440,8 @@ export const createBooking = createServerFn({ method: "POST" })
     }
 
     const totalDuration = services.data.reduce(
-      (sum, service) => sum + (service.duration_minutes ?? 60) + 15,
-      0,
+      (sum, service) => sum + (service.duration_minutes ?? 60),
+      30,
     );
 
     const blocked = await supabaseAdmin
@@ -472,46 +474,35 @@ export const createBooking = createServerFn({ method: "POST" })
       };
     }
 
-    // 2. Prefer mechanics explicitly assigned to work on that date. When there
-    //    is no date-specific assignment, active crew provide normal coverage.
-    const schedulesRes = await supabaseAdmin
-      .from("crew_schedules")
-      .select("*")
-      .eq("schedule_date", data.date)
-      .order("crew_id");
-    if (schedulesRes.error) {
+    // 2. Only active mechanics explicitly assigned to this date can be booked.
+    //    There is intentionally no fallback to every active crew member.
+    const [schedulesRes, activeCrewRes] = await Promise.all([
+      supabaseAdmin
+        .from("crew_schedules")
+        .select("*")
+        .eq("schedule_date", data.date)
+        .order("crew_id"),
+      supabaseAdmin
+        .from("crew_members")
+        .select("id")
+        .eq("is_active", true)
+        .eq("is_archived", false),
+    ]);
+    if (schedulesRes.error || activeCrewRes.error) {
       return {
         ok: false as const,
         error: "We could not verify mechanic availability. Please try again.",
       };
     }
 
-    const dateSchedules = schedulesRes.data ?? [];
-    let effectiveSchedules: {
-      crew_id: string;
-      start_time: string | null;
-      end_time: string | null;
-    }[] = dateSchedules.filter((schedule) => schedule.is_working);
-
-    if (dateSchedules.length === 0) {
-      const activeCrewRes = await supabaseAdmin
-        .from("crew_members")
-        .select("id")
-        .eq("is_active", true)
-        .eq("is_archived", false)
-        .order("id");
-      if (activeCrewRes.error) {
-        return {
-          ok: false as const,
-          error: "We could not verify mechanic availability. Please try again.",
-        };
-      }
-      effectiveSchedules = (activeCrewRes.data ?? []).map((crew) => ({
-        crew_id: crew.id,
-        start_time: "08:00:00",
-        end_time: "17:00:00",
-      }));
-    }
+    const activeCrewIds = new Set((activeCrewRes.data ?? []).map((crew) => crew.id));
+    const effectiveSchedules = Array.from(
+      new Map(
+        (schedulesRes.data ?? [])
+          .filter((schedule) => schedule.is_working && activeCrewIds.has(schedule.crew_id))
+          .map((schedule) => [schedule.crew_id, schedule]),
+      ).values(),
+    );
 
     if (!effectiveSchedules.length) {
       return { ok: false as const, error: "No mechanics are scheduled to work on that day." };

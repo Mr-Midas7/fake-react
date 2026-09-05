@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
-import { formatPHP } from "@/lib/shop";
+import { activeStatusTone, formatPHP } from "@/lib/shop";
 import { cn } from "@/lib/utils";
 
 type Product = {
@@ -595,7 +595,7 @@ export const ProductManager = forwardRef<
 
       <Card className="border-border/70 bg-card/60">
         <CardContent className="overflow-x-auto p-0">
-          <Table>
+          <Table className="admin-data-table">
             <TableHeader>
               <TableRow>
                 <TableHead>Model</TableHead>
@@ -609,25 +609,32 @@ export const ProductManager = forwardRef<
             <TableBody>
               {filteredItems.map((p) => (
                 <TableRow key={p.id}>
-                  <TableCell>
+                  <TableCell data-label={isMotorcycle ? "Model" : "Item"}>
                     <span className="block text-sm">{p.name}</span>
                     {!isMotorcycle && (
                       <span className="text-xs text-muted-foreground capitalize">{p.category}</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-sm">{p.brand ?? "-"}</TableCell>
+                  <TableCell data-label="Brand" className="text-sm">
+                    {p.brand ?? "-"}
+                  </TableCell>
                   {isMotorcycle && (
-                    <TableCell>
-                      <Badge variant="outline" className="uppercase">
+                    <TableCell data-label="Status">
+                      <Badge
+                        variant="outline"
+                        className={`uppercase ${activeStatusTone(p.is_active)}`}
+                      >
                         {p.is_active ? "Active" : "Deactivated"}
                       </Badge>
                     </TableCell>
                   )}
                   {!isMotorcycle && (
-                    <TableCell className="text-sm text-primary">{formatPHP(p.price)}</TableCell>
+                    <TableCell data-label="Price" className="text-sm text-primary">
+                      {formatPHP(p.price)}
+                    </TableCell>
                   )}
                   {!isMotorcycle && (
-                    <TableCell className="space-x-1">
+                    <TableCell data-label="Status" className="space-x-1">
                       <Badge variant="outline" className="uppercase">
                         {p.in_stock ? "In stock" : "Out"}
                       </Badge>
@@ -636,10 +643,15 @@ export const ProductManager = forwardRef<
                           Featured
                         </Badge>
                       )}
-                      {!p.is_active && <Badge variant="outline">Deactivated</Badge>}
+                      <Badge
+                        variant="outline"
+                        className={`uppercase ${activeStatusTone(p.is_active)}`}
+                      >
+                        {p.is_active ? "Active" : "Deactivated"}
+                      </Badge>
                     </TableCell>
                   )}
-                  <TableCell className="space-x-1 text-right">
+                  <TableCell data-label="Actions" className="space-x-1 text-right">
                     <Button size="sm" variant="ghost" onClick={() => openEdit(p)}>
                       <Pencil className="h-4 w-4" />
                     </Button>

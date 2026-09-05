@@ -35,7 +35,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
-import { formatPHP } from "@/lib/shop";
+import { activeStatusTone, formatPHP } from "@/lib/shop";
 
 export const Route = createFileRoute("/_authenticated/admin/services")({
   component: ServicesAdmin,
@@ -210,7 +210,7 @@ function ServicesAdmin() {
 
       <Card className="border-border/70 bg-card/60">
         <CardContent className="overflow-x-auto p-0">
-          <Table>
+          <Table className="admin-data-table">
             <TableHeader>
               <TableRow>
                 <TableHead>Service</TableHead>
@@ -226,21 +226,31 @@ function ServicesAdmin() {
                 ?.filter((s) => !filterCategory || s.category === filterCategory)
                 .map((s) => (
                   <TableRow key={s.id}>
-                    <TableCell>
+                    <TableCell data-label="Service">
                       <span className="block text-sm">{s.name}</span>
                       <span className="text-xs text-muted-foreground">{s.description}</span>
                     </TableCell>
-                    <TableCell className="text-xs text-muted-foreground capitalize">
+                    <TableCell
+                      data-label="Category"
+                      className="text-xs text-muted-foreground capitalize"
+                    >
                       {s.category}
                     </TableCell>
-                    <TableCell className="text-sm">{s.duration_minutes} mins</TableCell>
-                    <TableCell className="text-sm text-primary">{formatPHP(s.price)}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="uppercase">
+                    <TableCell data-label="Duration" className="text-sm">
+                      {s.duration_minutes} mins
+                    </TableCell>
+                    <TableCell data-label="Price" className="text-sm text-primary">
+                      {formatPHP(s.price)}
+                    </TableCell>
+                    <TableCell data-label="Status">
+                      <Badge
+                        variant="outline"
+                        className={`uppercase ${activeStatusTone(s.is_active)}`}
+                      >
                         {s.is_active ? "Active" : "Deactivated"}
                       </Badge>
                     </TableCell>
-                    <TableCell className="space-x-1 text-right">
+                    <TableCell data-label="Actions" className="space-x-1 text-right">
                       <Button
                         size="sm"
                         variant="ghost"

@@ -4,6 +4,7 @@ import { CalendarDays, Eye } from "lucide-react";
 import { useDeferredValue, useEffect, useState } from "react";
 
 import { PageHeader } from "@/components/admin/page-header";
+import { ActiveFilterChips } from "@/components/admin/active-filter-chips";
 import { PaginationControls } from "@/components/admin/pagination-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -95,9 +96,18 @@ function CustomersPage() {
         placeholder="Search name, number, or email"
         className="mb-4 max-w-xs"
       />
+      <ActiveFilterChips
+        filters={
+          term.trim() ? [{ label: "Search", value: term.trim(), onClear: () => setTerm("") }] : []
+        }
+        onReset={() => {
+          setTerm("");
+          setPage(0);
+        }}
+      />
       <Card className="border-border/70 bg-card/60">
         <CardContent className="overflow-x-auto p-0">
-          <Table>
+          <Table className="admin-data-table">
             <TableHeader>
               <TableRow>
                 <TableHead>Customer</TableHead>
@@ -112,20 +122,28 @@ function CustomersPage() {
             <TableBody>
               {rows.map((customer) => (
                 <TableRow key={customer.phone}>
-                  <TableCell className="text-sm">{customer.customer_name}</TableCell>
-                  <TableCell className="text-xs">
+                  <TableCell data-label="Customer" className="text-sm">
+                    {customer.customer_name}
+                  </TableCell>
+                  <TableCell data-label="Contact" className="text-xs">
                     {customer.phone}
                     {customer.email && (
                       <span className="block text-muted-foreground">{customer.email}</span>
                     )}
                   </TableCell>
-                  <TableCell className="max-w-72 text-xs">{customer.units.join(", ")}</TableCell>
-                  <TableCell className="text-sm">{customer.visits}</TableCell>
-                  <TableCell className="text-sm text-primary">
+                  <TableCell data-label="Units" className="max-w-72 text-xs">
+                    {customer.units.join(", ")}
+                  </TableCell>
+                  <TableCell data-label="Visits" className="text-sm">
+                    {customer.visits}
+                  </TableCell>
+                  <TableCell data-label="Completed spend" className="text-sm text-primary">
                     {formatPHP(customer.completed_spend)}
                   </TableCell>
-                  <TableCell className="text-xs">{formatDateLong(customer.last_booking)}</TableCell>
-                  <TableCell className="text-right">
+                  <TableCell data-label="Last booking" className="text-xs">
+                    {formatDateLong(customer.last_booking)}
+                  </TableCell>
+                  <TableCell data-label="History" className="text-right">
                     <Button
                       size="sm"
                       variant="ghost"

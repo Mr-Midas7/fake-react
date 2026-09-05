@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Download, FileText, RefreshCw, Search, X } from "lucide-react";
+import { Download, FileText, RefreshCw, Search } from "lucide-react";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/page-header";
+import { ActiveFilterChips } from "@/components/admin/active-filter-chips";
 import { PaginationControls } from "@/components/admin/pagination-controls";
 import {
   AlertDialog,
@@ -99,6 +100,8 @@ type ActivityLog = {
   activity_date: string;
   activity_time: string;
   created_at: string;
+  record_id: string | null;
+  ip_address: string | null;
 };
 
 type ExportFormat = "pdf" | "docx";
@@ -168,7 +171,7 @@ function ActivityLogPage() {
       if (deferredSearch.trim()) {
         const term = cleanSearchTerm(deferredSearch);
         query = query.or(
-          `summary.ilike.%${term}%,actor_email.ilike.%${term}%,target_label.ilike.%${term}%`,
+          `summary.ilike.%${term}%,actor_email.ilike.%${term}%,target_label.ilike.%${term}%,ip_address.ilike.%${term}%`,
         );
       }
 
@@ -179,6 +182,22 @@ function ActivityLogPage() {
   });
 
   const rows = logs.data?.rows ?? [];
+  const activeFilters = [
+    ...(search.trim()
+      ? [{ label: "Search", value: search.trim(), onClear: () => setSearch("") }]
+      : []),
+    ...(user.trim() ? [{ label: "User", value: user.trim(), onClear: () => setUser("") }] : []),
+    ...(action !== "all"
+      ? [{ label: "Action", value: action, onClear: () => setAction("all") }]
+      : []),
+    ...(resource !== "all"
+      ? [{ label: "Category", value: resource, onClear: () => setResource("all") }]
+      : []),
+    ...(fromDate ? [{ label: "From", value: fromDate, onClear: () => setFromDate("") }] : []),
+    ...(toDate ? [{ label: "To", value: toDate, onClear: () => setToDate("") }] : []),
+    ...(fromTime ? [{ label: "After", value: fromTime, onClear: () => setFromTime("") }] : []),
+    ...(toTime ? [{ label: "Before", value: toTime, onClear: () => setToTime("") }] : []),
+  ];
   const filterDescription = useMemo(() => {
     if (!hasFilters) return "Showing the 20 latest records. Apply a filter to view older matches.";
     return `Showing page ${page + 1} of ${logs.data?.total ?? 0} matching records from the last 50 days.`;
@@ -228,7 +247,19 @@ function ActivityLogPage() {
 
     autoTable(doc, {
       startY: tableStartY,
-      head: [["Date", "Time", "User", "Action", "Category", "Record", "Changed fields"]],
+      head: [
+        [
+          "Date",
+          "Time",
+          "User",
+          "Action",
+          "Category",
+          "Record",
+          "Record ID",
+          "IP address",
+          "Changed fields",
+        ],
+      ],
       body: exportRows(rows),
       theme: "grid",
       margin: { bottom: 48 },
@@ -280,7 +311,17 @@ function ActivityLogPage() {
           }),
         ],
       });
-    const headers = ["Date", "Time", "User", "Action", "Category", "Record", "Changed fields"];
+    const headers = [
+      "Date",
+      "Time",
+      "User",
+      "Action",
+      "Category",
+      "Record",
+      "Record ID",
+      "IP address",
+      "Changed fields",
+    ];
     const table = new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
       borders: {
@@ -379,7 +420,7 @@ function ActivityLogPage() {
     <div>
       <PageHeader
         title="Activity Log"
-        description="Admin changes are retained for 50 days. New activity appears after refresh."
+        description="Admin changes and sign-in events are retained for 50 days with record IDs and request IP addresses."
         action={
           <div className="flex gap-2">
             <Button variant="outline" onClick={refresh} disabled={logs.isFetching}>
@@ -415,7 +456,7 @@ function ActivityLogPage() {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 className="pl-9"
-                placeholder="Search activity, record, or user"
+                placeholder="Search activity, record, user, or IP address"
               />
             </div>
           </div>
@@ -500,49 +541,58 @@ function ActivityLogPage() {
               onChange={(event) => setToTime(event.target.value)}
             />
           </div>
-          {hasFilters && (
-            <Button variant="ghost" className="self-end" onClick={clearFilters}>
-              <X /> Clear filters
-            </Button>
-          )}
         </CardContent>
       </Card>
+      <ActiveFilterChips filters={activeFilters} onReset={clearFilters} />
 
       <Card className="border-border/70 bg-card/60">
         <CardContent className="overflow-x-auto p-0">
           <div className="border-b border-border px-5 py-3 text-sm text-muted-foreground">
             {filterDescription}
           </div>
-          <Table>
+          <Table className="admin-data-table">
             <TableHeader>
               <TableRow>
                 <TableHead>Date & time</TableHead>
                 <TableHead>User</TableHead>
                 <TableHead>Action</TableHead>
                 <TableHead>Category</TableHead>
+                <TableHead>Record ID</TableHead>
+                <TableHead>IP address</TableHead>
                 <TableHead>Changed fields</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((row) => (
                 <TableRow key={row.id}>
-                  <TableCell className="whitespace-nowrap text-sm">
+                  <TableCell data-label="Date & time" className="whitespace-nowrap text-sm">
                     {formatActivityDate(row.activity_date)}
                     <span className="block text-xs text-muted-foreground">
                       {formatActivityTime(row.activity_time)}
                     </span>
                   </TableCell>
-                  <TableCell className="text-sm">{row.actor_email ?? "Unknown admin"}</TableCell>
-                  <TableCell>
+                  <TableCell data-label="User" className="text-sm">
+                    {row.actor_email ?? "Unknown admin"}
+                  </TableCell>
+                  <TableCell data-label="Action">
                     <span className="block text-sm">{row.summary}</span>
                     <span className="text-xs text-muted-foreground">{row.target_label}</span>
                   </TableCell>
-                  <TableCell>
+                  <TableCell data-label="Category">
                     <Badge variant="outline" className="capitalize">
                       {row.resource_type}
                     </Badge>
                   </TableCell>
-                  <TableCell className="min-w-44">
+                  <TableCell
+                    data-label="Record ID"
+                    className="max-w-52 break-all font-mono text-xs"
+                  >
+                    {row.record_id ?? "—"}
+                  </TableCell>
+                  <TableCell data-label="IP address" className="font-mono text-xs">
+                    {row.ip_address ?? "Unavailable"}
+                  </TableCell>
+                  <TableCell data-label="Changed fields" className="min-w-44">
                     {row.changed_fields.length > 0 ? (
                       <div className="flex flex-wrap gap-1">
                         {row.changed_fields.map((field) => (
@@ -560,7 +610,7 @@ function ActivityLogPage() {
               {!logs.isLoading && rows.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={5}
+                    colSpan={7}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
                     No activity records match these filters.
@@ -643,6 +693,8 @@ function exportRows(rows: ActivityLog[]) {
     row.action,
     row.resource_type,
     row.target_label,
+    row.record_id ?? "—",
+    row.ip_address ?? "Unavailable",
     row.changed_fields.map((field) => field.replace(/_/g, " ")).join(", ") || "—",
   ]);
 }

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Loader2, Plus } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/page-header";
@@ -64,11 +64,20 @@ type ScheduleWithCrew = {
 
 type WorkingMechanic = {
   id: string;
+  schedule_date: string;
   name: string;
   role: string;
   start_time: string | null;
   end_time: string | null;
   is_date_assignment: boolean;
+};
+
+type AssignmentFilter = {
+  crewId: string;
+  role: string;
+  period: "weekly" | "monthly" | "custom";
+  customStart: string;
+  customEnd: string;
 };
 
 type CrewMember = {
@@ -84,9 +93,35 @@ function dateToKey(date: Date) {
   return `${y}-${m}-${d}`;
 }
 
+function assignmentPeriodBounds(filter: AssignmentFilter) {
+  if (filter.period === "custom") {
+    return { from: filter.customStart, to: filter.customEnd };
+  }
+
+  const today = new Date();
+  if (filter.period === "monthly") {
+    return {
+      from: dateToKey(new Date(today.getFullYear(), today.getMonth(), 1)),
+      to: dateToKey(new Date(today.getFullYear(), today.getMonth() + 1, 0)),
+    };
+  }
+
+  const mondayOffset = (today.getDay() + 6) % 7;
+  const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - mondayOffset);
+  return {
+    from: dateToKey(monday),
+    to: dateToKey(new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6)),
+  };
+}
+
 function AvailabilityPage() {
   const qc = useQueryClient();
-  const [viewDate, setViewDate] = useState<Date | undefined>(undefined);
+  const [filterCrewId, setFilterCrewId] = useState("all");
+  const [filterRole, setFilterRole] = useState("all");
+  const [filterPeriod, setFilterPeriod] = useState<AssignmentFilter["period"]>("weekly");
+  const [customPeriodStart, setCustomPeriodStart] = useState("");
+  const [customPeriodEnd, setCustomPeriodEnd] = useState("");
+  const [appliedFilter, setAppliedFilter] = useState<AssignmentFilter | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [assignDates, setAssignDates] = useState<Date[]>([]);
   const [assignMechanic, setAssignMechanic] = useState<string>("");
@@ -193,50 +228,78 @@ function AvailabilityPage() {
     },
   });
 
-  // Show assignments that were explicitly made for the selected date.
-  const getWorkingMechanicsForDate = useCallback(
-    (dateStr: string) => {
-      const allSchedules = schedules.data ?? [];
-      const crewMap = new Map((crew.data ?? []).map((c) => [c.id, c]));
-
-      const relevant = allSchedules.filter(
-        (schedule) => schedule.schedule_date === dateStr && schedule.is_working,
-      );
-
-      // Legacy duplicate rows should not make a mechanic appear twice.
-      const seen = new Set<string>();
-      const result: WorkingMechanic[] = [];
-      for (const s of relevant) {
-        if (seen.has(s.crew_id)) continue;
-        seen.add(s.crew_id);
-        result.push({
-          id: s.id,
-          name: s.crew_members?.name ?? crewMap.get(s.crew_id)?.name ?? "Unknown",
-          role: s.crew_members?.role ?? "Mechanic",
-          start_time: s.start_time ? String(s.start_time).slice(0, 5) : null,
-          end_time: s.end_time ? String(s.end_time).slice(0, 5) : null,
-          is_date_assignment: true,
-        });
-      }
-      return result;
-    },
-    [crew.data, schedules.data],
+  const assignDateStrs = useMemo(() => assignDates.map(dateToKey), [assignDates]);
+  const roleOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (schedules.data ?? [])
+            .map((schedule) => schedule.crew_members?.role)
+            .filter((role): role is string => Boolean(role)),
+        ),
+      ).sort(),
+    [schedules.data],
   );
 
-  const assignDateStrs = useMemo(() => assignDates.map(dateToKey), [assignDates]);
+  const filteredAssignments = useMemo(() => {
+    if (!appliedFilter) return null;
+    const { from, to } = assignmentPeriodBounds(appliedFilter);
+    const crewMap = new Map((crew.data ?? []).map((member) => [member.id, member]));
 
-  const viewDateStr = useMemo(() => {
-    if (!viewDate) return null;
-    const y = viewDate.getFullYear();
-    const m = String(viewDate.getMonth() + 1).padStart(2, "0");
-    const d = String(viewDate.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  }, [viewDate]);
+    return (schedules.data ?? [])
+      .filter(
+        (schedule) =>
+          schedule.is_working &&
+          schedule.schedule_date &&
+          schedule.schedule_date >= from &&
+          schedule.schedule_date <= to &&
+          (appliedFilter.crewId === "all" || schedule.crew_id === appliedFilter.crewId) &&
+          (appliedFilter.role === "all" || schedule.crew_members?.role === appliedFilter.role),
+      )
+      .map((schedule) => ({
+        id: schedule.id,
+        schedule_date: schedule.schedule_date as string,
+        name: schedule.crew_members?.name ?? crewMap.get(schedule.crew_id)?.name ?? "Unknown",
+        role: schedule.crew_members?.role ?? "Mechanic",
+        start_time: schedule.start_time ? String(schedule.start_time).slice(0, 5) : null,
+        end_time: schedule.end_time ? String(schedule.end_time).slice(0, 5) : null,
+        is_date_assignment: true,
+      }))
+      .sort(
+        (first, second) =>
+          first.schedule_date.localeCompare(second.schedule_date) ||
+          first.name.localeCompare(second.name),
+      ) as WorkingMechanic[];
+  }, [appliedFilter, crew.data, schedules.data]);
 
-  const dayInfo = useMemo(() => {
-    if (!viewDateStr) return null;
-    return getWorkingMechanicsForDate(viewDateStr);
-  }, [viewDateStr, getWorkingMechanicsForDate]);
+  function applyAssignmentFilter() {
+    if (filterPeriod === "custom") {
+      if (!customPeriodStart || !customPeriodEnd) {
+        toast.error("Choose a custom period start and end date.");
+        return;
+      }
+      if (customPeriodStart > customPeriodEnd) {
+        toast.error("The custom period end must be after the start date.");
+        return;
+      }
+    }
+    setAppliedFilter({
+      crewId: filterCrewId,
+      role: filterRole,
+      period: filterPeriod,
+      customStart: customPeriodStart,
+      customEnd: customPeriodEnd,
+    });
+  }
+
+  function clearAssignmentFilter() {
+    setFilterCrewId("all");
+    setFilterRole("all");
+    setFilterPeriod("weekly");
+    setCustomPeriodStart("");
+    setCustomPeriodEnd("");
+    setAppliedFilter(null);
+  }
 
   const handleSave = async () => {
     if (!assignMechanic || assignDateStrs.length === 0) {
@@ -306,7 +369,7 @@ function AvailabilityPage() {
     <div>
       <PageHeader
         title="Crew Scheduling"
-        description="View and manage crew assignments for specific dates."
+        description="Find and manage crew assignments by crew member, role, and period."
         action={
           <Button
             className="font-display uppercase"
@@ -324,54 +387,150 @@ function AvailabilityPage() {
         }
       />
 
-      {/* Calendar view */}
       <Card className="border-border/70 bg-card/60">
         <CardHeader>
           <CardTitle className="font-display text-lg tracking-wide uppercase">
-            Crew Calendar
+            Crew Schedule Search
           </CardTitle>
         </CardHeader>
         <CardContent className="p-4">
-          <p className="mb-4 text-sm text-muted-foreground">
-            Click a day to view the crew assigned to that date.
-          </p>
+          <div className="grid gap-4 rounded-lg border border-border/70 bg-background/20 p-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="space-y-1.5">
+              <Label>Crew member</Label>
+              <Select value={filterCrewId} onValueChange={setFilterCrewId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="All crew members" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All crew members</SelectItem>
+                  {(crew.data ?? []).map((member) => (
+                    <SelectItem key={member.id} value={member.id}>
+                      {member.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Role</Label>
+              <Select value={filterRole} onValueChange={setFilterRole}>
+                <SelectTrigger>
+                  <SelectValue placeholder="All roles" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All roles</SelectItem>
+                  {roleOptions.map((role) => (
+                    <SelectItem key={role} value={role}>
+                      {role}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Period</Label>
+              <Select
+                value={filterPeriod}
+                onValueChange={(value) => setFilterPeriod(value as AssignmentFilter["period"])}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="weekly">This week</SelectItem>
+                  <SelectItem value="monthly">This month</SelectItem>
+                  <SelectItem value="custom">Custom period</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={clearAssignmentFilter}
+                className="flex-1"
+              >
+                Clear
+              </Button>
+              <Button type="button" onClick={applyAssignmentFilter} className="flex-1">
+                Apply filter
+              </Button>
+            </div>
+            {filterPeriod === "custom" && (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="crew-period-start">Period start</Label>
+                  <Input
+                    id="crew-period-start"
+                    type="date"
+                    value={customPeriodStart}
+                    max={customPeriodEnd || undefined}
+                    onChange={(event) => setCustomPeriodStart(event.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="crew-period-end">Period end</Label>
+                  <Input
+                    id="crew-period-end"
+                    type="date"
+                    value={customPeriodEnd}
+                    min={customPeriodStart || undefined}
+                    onChange={(event) => setCustomPeriodEnd(event.target.value)}
+                  />
+                </div>
+              </>
+            )}
+          </div>
 
-          <div className="grid gap-2 md:grid-cols-[300px_1fr]">
+          <div className="mt-5">
             {/* Day info panel — slides in from the left */}
             <div className="overflow-hidden">
-              {dayInfo !== null ? (
-                <div key={viewDateStr} className="animate-in slide-in-from-left duration-300">
+              {filteredAssignments !== null ? (
+                <div
+                  key={JSON.stringify(appliedFilter)}
+                  className="animate-in fade-in slide-in-from-bottom-2 duration-200"
+                >
                   <Card className="border-border/70 bg-card/40">
                     <CardHeader>
                       <CardTitle className="font-display text-sm uppercase">
-                        {viewDateStr ? formatDateLong(viewDateStr) : ""}
+                        Crew assignments
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-4">
-                      {dayInfo.length === 0 ? (
+                      {filteredAssignments.length === 0 ? (
                         <p className="text-sm text-muted-foreground">
-                          No mechanics are scheduled to work on this day.
+                          No crew assignments match this filter.
                         </p>
                       ) : (
-                        <Table>
+                        <Table className="admin-data-table">
                           <TableHeader>
                             <TableRow>
                               <TableHead>Mechanic</TableHead>
+                              <TableHead>Role</TableHead>
+                              <TableHead>Date</TableHead>
                               <TableHead>Shift</TableHead>
                               <TableHead className="text-right">Action</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {dayInfo.map((w) => (
+                            {filteredAssignments.map((w) => (
                               <TableRow key={w.id}>
-                                <TableCell className="text-sm">{w.name}</TableCell>
-                                <TableCell className="text-xs">
+                                <TableCell data-label="Mechanic" className="text-sm">
+                                  {w.name}
+                                </TableCell>
+                                <TableCell data-label="Role" className="text-sm">
+                                  {w.role}
+                                </TableCell>
+                                <TableCell data-label="Date" className="text-sm">
+                                  {formatDateLong(w.schedule_date)}
+                                </TableCell>
+                                <TableCell data-label="Shift" className="text-xs">
                                   {w.start_time && w.end_time
                                     ? (PRESET_LABELS[`${w.start_time}|${w.end_time}`] ??
                                       `${w.start_time} - ${w.end_time}`)
                                     : "-"}
                                 </TableCell>
-                                <TableCell className="text-right">
+                                <TableCell data-label="Action" className="text-right">
                                   {w.is_date_assignment && (
                                     <button
                                       type="button"
@@ -393,27 +552,11 @@ function AvailabilityPage() {
               ) : (
                 <div className="flex min-h-[120px] w-full items-center justify-center">
                   <p className="text-sm text-muted-foreground">
-                    Click a day to view the crew assigned to that date.
+                    Choose your crew, role, and period, then apply the filter.
                   </p>
                 </div>
               )}
             </div>
-
-            {/* Calendar */}
-            <Calendar
-              mode="single"
-              selected={viewDate}
-              onSelect={setViewDate}
-              className="border-border/70"
-              classNames={{
-                months: "w-full",
-                month: "w-full",
-                table: "w-full",
-                nav: "justify-between gap-1",
-                month_caption:
-                  "flex h-(--cell-size) w-full items-center justify-center px-(--cell-size)",
-              }}
-            />
           </div>
         </CardContent>
       </Card>

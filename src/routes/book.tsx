@@ -57,6 +57,14 @@ const searchSchema = z.object({
 });
 
 const turnstileEnabled = Boolean(import.meta.env["VITE_TURNSTILE_SITE_KEY"]);
+const MOBILE_BOOKING_STEPS = [
+  "Your details",
+  "Motorcycle details",
+  "Select services",
+  "Pick a schedule",
+  "Terms",
+  "Review",
+] as const;
 
 export const Route = createFileRoute("/book")({
   validateSearch: searchSchema,
@@ -214,8 +222,8 @@ function BookPage() {
   );
   const total = selectedServices.reduce((sum, s) => sum + Number(s.price), 0);
   const totalDuration = selectedServices.reduce(
-    (sum, service) => sum + (service.duration_minutes ?? 60) + 15,
-    0,
+    (sum, service) => sum + (service.duration_minutes ?? 60),
+    selectedServices.length > 0 ? 30 : 0,
   );
 
   useEffect(() => {
@@ -371,6 +379,7 @@ function BookPage() {
                 </p>
                 <p>Estimated total: {formatPHP(result.total)}</p>
                 <p>Status: pending confirmation by the shop</p>
+                <p>The shop will call/txt you for the confirmation</p>
               </div>
               <div className="mt-7 flex flex-wrap justify-center gap-3">
                 <Button asChild className="font-display uppercase">
@@ -400,26 +409,38 @@ function BookPage() {
           Schedule your service online. Walk-ins are accommodated depending on the queue.
         </p>
 
-        <div className="mt-6 md:hidden">
+        <div className="sticky top-20 z-20 -mx-4 mt-6 border-y border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span className="font-medium text-foreground">Step {mobileStep} of 6</span>
-            <span>
-              {
-                [
-                  "Your details",
-                  "Motorcycle details",
-                  "Select services",
-                  "Pick a schedule",
-                  "Terms",
-                  "Review",
-                ][mobileStep - 1]
-              }
-            </span>
+            <span>{MOBILE_BOOKING_STEPS[mobileStep - 1]}</span>
           </div>
+          <ol className="mt-3 grid grid-cols-6 gap-1" aria-label="Booking progress">
+            {MOBILE_BOOKING_STEPS.map((step, index) => {
+              const stepNumber = index + 1;
+              const complete = stepNumber < mobileStep;
+              const current = stepNumber === mobileStep;
+              return (
+                <li key={step} className="min-w-0">
+                  <span
+                    className={cn(
+                      "flex h-6 w-full items-center justify-center rounded-full border text-[10px] font-semibold",
+                      complete && "border-primary bg-primary text-primary-foreground",
+                      current && "border-primary text-primary",
+                      !complete && !current && "border-border text-muted-foreground",
+                    )}
+                    aria-current={current ? "step" : undefined}
+                    title={step}
+                  >
+                    {complete ? "✓" : stepNumber}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
             <div
               className="h-full rounded-full bg-primary transition-[width] duration-200"
-              style={{ width: `${(mobileStep / 6) * 100}%` }}
+              style={{ width: `${((mobileStep - 1) / 5) * 100}%` }}
             />
           </div>
         </div>
@@ -663,7 +684,7 @@ function BookPage() {
                 <span className="font-medium text-foreground">
                   {totalDuration} minutes reserved
                 </span>{" "}
-                including a 15-minute buffer for each selected service.
+                including a 15-minute arrival buffer and a 15-minute post-service buffer.
               </p>
             )}
             <WizardActions onBack={goBackMobileBooking} onContinue={continueMobileBooking} />
@@ -688,8 +709,8 @@ function BookPage() {
             ) : (
               <>
                 <p className="mb-2 text-sm text-muted-foreground">
-                  Available dates (Monday to Saturday). Dates with no remaining mechanic capacity
-                  are marked Fully Booked.
+                  Available dates have an assigned mechanic, an open shop schedule, and enough time
+                  for your selected services. Other dates cannot be selected.
                 </p>
 
                 <div className="w-full overflow-x-auto rounded-lg border border-border bg-card/50 p-2">
@@ -818,6 +839,8 @@ function BookPage() {
             className={cn(
               "flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card/60 p-5",
               mobileStep !== 6 && "hidden md:flex",
+              mobileStep === 6 &&
+                "sticky bottom-0 z-20 bg-card/95 shadow-lg backdrop-blur md:static md:shadow-none",
             )}
           >
             <div>
@@ -889,7 +912,7 @@ function Section({
 
 function WizardActions({ onBack, onContinue }: { onBack?: () => void; onContinue: () => void }) {
   return (
-    <div className="mt-6 flex justify-between gap-3 md:hidden">
+    <div className="sticky bottom-0 z-20 -mx-6 mt-6 flex justify-between gap-3 border-t border-border/70 bg-card/95 px-6 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-[0_-10px_20px_-18px_rgb(0_0_0_/_0.55)] backdrop-blur md:hidden">
       {onBack ? (
         <Button type="button" variant="outline" onClick={onBack}>
           Back

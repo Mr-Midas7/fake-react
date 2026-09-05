@@ -48,7 +48,6 @@ export type AvailabilitySource = {
   blocks: DateBlock[];
   assignments: Assignment[];
   schedules: CrewSchedule[];
-  activeCrewIds: string[];
   exceptions: CrewException[];
 };
 
@@ -147,20 +146,12 @@ function computeAvailableSlotsFromSource(
 
     let availableMechanics = 0;
 
-    // Date-specific assignments take precedence. When a date has no assignment,
-    // active crew members provide the shop's normal 8 AM–5 PM booking coverage.
+    // Only active crew explicitly assigned to this date provide public booking
+    // coverage. A date without an assigned crew has no available time slots.
     const allSchedules = availability.schedules ?? [];
-    const hasDateSpecificSchedule = allSchedules.some((s) => s.schedule_date === date);
-    const dateSchedules = allSchedules.filter((s) => s.schedule_date === date && s.is_working);
-    const fallbackSchedules: CrewSchedule[] = (availability.activeCrewIds ?? []).map((crewId) => ({
-      crew_id: crewId,
-      day_of_week: 0,
-      start_time: "08:00",
-      end_time: "17:00",
-      is_working: true,
-      schedule_date: null,
-    }));
-    const schedulesForDate = hasDateSpecificSchedule ? dateSchedules : fallbackSchedules;
+    const schedulesForDate = allSchedules.filter(
+      (schedule) => schedule.schedule_date === date && schedule.is_working,
+    );
 
     // Keep this guard so a legacy duplicate cannot make a mechanic appear twice.
     const crewSchedMap = new Map<string, CrewSchedule>();
