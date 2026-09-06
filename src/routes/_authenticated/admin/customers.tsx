@@ -40,8 +40,8 @@ type Customer = {
 type CustomerPage = { rows: Customer[]; total: number };
 
 function CustomersPage() {
-  const pageSize = 25;
-  const historyPageSize = 15;
+  const pageSize = 10;
+  const historyPageSize = 10;
   const [term, setTerm] = useState("");
   const [page, setPage] = useState(0);
   const [historyPage, setHistoryPage] = useState(0);

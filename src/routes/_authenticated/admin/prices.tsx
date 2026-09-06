@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/admin/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { FieldError } from "@/components/ui/field-error";
 import {
   Dialog,
   DialogContent,
@@ -44,16 +45,14 @@ function PricesPage() {
         description="Update the price list for services and shop items. A change reason is recorded for every edit."
       />
       <Tabs defaultValue="services">
-        <div className="overflow-x-auto overflow-y-visible">
-          <TabsList className="mb-4 w-max min-w-full">
-            <TabsTrigger value="services" className="font-display uppercase">
-              Services
-            </TabsTrigger>
-            <TabsTrigger value="products" className="font-display uppercase">
-              Parts & Accessories
-            </TabsTrigger>
-          </TabsList>
-        </div>
+        <TabsList className="mb-4 grid h-auto w-full grid-cols-2 p-1 sm:inline-flex sm:w-auto">
+          <TabsTrigger value="services" className="w-full font-display uppercase sm:w-auto">
+            Services
+          </TabsTrigger>
+          <TabsTrigger value="products" className="w-full font-display uppercase sm:w-auto">
+            Parts & Accessories
+          </TabsTrigger>
+        </TabsList>
         <TabsContent value="services">
           <PriceTable table="services" onHistoryClick={setHistoryItem} />
         </TabsContent>
@@ -83,6 +82,7 @@ function PriceTable({
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<Record<string, boolean>>({});
+  const [priceErrors, setPriceErrors] = useState<Record<string, string>>({});
 
   const rows = useQuery({
     queryKey: ["prices", table, filter],
@@ -147,9 +147,12 @@ function PriceTable({
       setDrafts({});
       setReasons({});
     },
-    onError: (err: Error) => {
+    onError: (err: Error, variables) => {
       console.error("Price update failed:", err);
-      toast.error(`Price update failed: ${err.message}`);
+      setPriceErrors((current) => ({
+        ...current,
+        [variables.id]: `Price update failed: ${err.message}`,
+      }));
     },
   });
 
@@ -192,7 +195,7 @@ function PriceTable({
             </Button>
           </div>
         </div>
-        <Table>
+        <Table className="admin-data-table">
           <TableHeader>
             <TableRow>
               <TableHead>Item</TableHead>
@@ -206,21 +209,30 @@ function PriceTable({
           <TableBody>
             {rows.data?.map((r) => (
               <TableRow key={r.id}>
-                <TableCell>
+                <TableCell data-label="Item">
                   <span className="text-sm">{r.name}</span>
                 </TableCell>
-                <TableCell className="text-sm text-primary">{formatPHP(r.price)}</TableCell>
+                <TableCell data-label="Current price" className="text-sm text-primary">
+                  {formatPHP(r.price)}
+                </TableCell>
                 {filter === "active" && (
                   <>
-                    <TableCell>
-                      <Input
-                        className="max-w-32"
-                        inputMode="decimal"
-                        value={drafts[r.id] ?? String(r.price)}
-                        onChange={(e) => setDrafts({ ...drafts, [r.id]: e.target.value })}
-                      />
+                    <TableCell data-label="New price">
+                      <div className="w-full">
+                        <Input
+                          className="max-w-32"
+                          inputMode="decimal"
+                          value={drafts[r.id] ?? String(r.price)}
+                          onChange={(e) => {
+                            setDrafts({ ...drafts, [r.id]: e.target.value });
+                            setPriceErrors((current) => ({ ...current, [r.id]: "" }));
+                          }}
+                          aria-invalid={!!priceErrors[r.id]}
+                        />
+                        <FieldError message={priceErrors[r.id]} />
+                      </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell data-label="Reason">
                       <Input
                         className="max-w-40"
                         placeholder="e.g. supplier cost increase"
@@ -230,25 +242,27 @@ function PriceTable({
                     </TableCell>
                   </>
                 )}
-                <TableCell>
+                <TableCell data-label="Status">
                   <Badge variant="outline" className={`uppercase ${activeStatusTone(r.is_active)}`}>
                     {r.is_active ? "Active" : "Deactivated"}
                   </Badge>
                 </TableCell>
-                <TableCell className="flex justify-end gap-2 text-right">
-                  <Button size="sm" variant="ghost" onClick={() => onHistoryClick(r.id)}>
-                    History
-                  </Button>
-                  {filter === "active" && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!hasChanges(r) || pending[r.id]}
-                      onClick={() => handleSave(r)}
-                    >
-                      Save
+                <TableCell data-label="Action" className="text-right">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button size="sm" variant="ghost" onClick={() => onHistoryClick(r.id)}>
+                      History
                     </Button>
-                  )}
+                    {filter === "active" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!hasChanges(r) || pending[r.id]}
+                        onClick={() => handleSave(r)}
+                      >
+                        Save
+                      </Button>
+                    )}
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -301,7 +315,7 @@ function PriceHistoryDialog({
               : "Recent price changes for this item."}
           </DialogDescription>
         </DialogHeader>
-        <Table>
+        <Table className="admin-data-table">
           <TableHeader>
             <TableRow>
               <TableHead>Date</TableHead>
@@ -313,14 +327,18 @@ function PriceHistoryDialog({
           <TableBody>
             {history.data?.map((h) => (
               <TableRow key={h.id}>
-                <TableCell className="text-xs">
+                <TableCell data-label="Date" className="text-xs">
                   {new Date(h.created_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
                 </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
+                <TableCell data-label="Old price" className="text-sm text-muted-foreground">
                   {formatPHP(h.old_price)}
                 </TableCell>
-                <TableCell className="text-sm text-primary">{formatPHP(h.new_price)}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{h.reason ?? "-"}</TableCell>
+                <TableCell data-label="New price" className="text-sm text-primary">
+                  {formatPHP(h.new_price)}
+                </TableCell>
+                <TableCell data-label="Reason" className="text-xs text-muted-foreground">
+                  {h.reason ?? "-"}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

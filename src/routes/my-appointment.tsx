@@ -10,6 +10,7 @@ import { SiteHeader } from "@/components/site/site-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { FieldError } from "@/components/ui/field-error";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -74,12 +75,16 @@ function MyAppointment() {
     onSuccess: (res) => {
       if (!res.ok) {
         setAppt(null);
-        toast.error(res.error);
+        setErrors((current) => ({ ...current, reference: res.error }));
         return;
       }
       setAppt(res.appointment);
     },
-    onError: () => toast.error("Please check your reference code and mobile number."),
+    onError: () =>
+      setErrors((current) => ({
+        ...current,
+        reference: "Please check your reference code and mobile number.",
+      })),
   });
 
   const cancelMutation = useMutation({
@@ -87,13 +92,17 @@ function MyAppointment() {
       cancel({ data: { reference: normalizeReferenceCode(reference), phone: phone.trim() } }),
     onSuccess: (res) => {
       if (!res.ok) {
-        toast.error(res.error);
+        setErrors((current) => ({ ...current, reference: res.error }));
         return;
       }
       toast.success("Your appointment has been cancelled.");
       search.mutate();
     },
-    onError: () => toast.error("We could not cancel the appointment. Please call the shop."),
+    onError: () =>
+      setErrors((current) => ({
+        ...current,
+        reference: "We could not cancel the appointment. Please call the shop.",
+      })),
   });
 
   function validate() {
@@ -140,7 +149,7 @@ function MyAppointment() {
               autoCapitalize="characters"
               aria-invalid={!!errors.reference}
             />
-            {errors.reference && <p className="text-xs text-destructive">{errors.reference}</p>}
+            <FieldError message={errors.reference} />
           </div>
           <div className="space-y-1.5">
             <Label>Mobile number</Label>
@@ -160,7 +169,7 @@ function MyAppointment() {
               placeholder="09171234567"
               aria-invalid={!!errors.phone}
             />
-            {errors.phone && <p className="text-xs text-destructive">{errors.phone}</p>}
+            <FieldError message={errors.phone} />
           </div>
           <Button type="submit" disabled={search.isPending} className="font-display uppercase">
             {search.isPending ? <Loader2 className="animate-spin" /> : <Search />} Find

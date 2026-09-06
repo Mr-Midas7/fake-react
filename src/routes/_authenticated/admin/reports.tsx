@@ -1,11 +1,25 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Download, FileText } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { format } from "date-fns";
+import {
+  BarChart3,
+  CalendarDays,
+  CalendarRange,
+  CheckCircle2,
+  CircleDollarSign,
+  Download,
+  FileText,
+  Filter,
+  ListFilter,
+  RotateCcw,
+  TrendingDown,
+  TrendingUp,
+  Wrench,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { PageHeader } from "@/components/admin/page-header";
-import { ActiveFilterChips } from "@/components/admin/active-filter-chips";
 import { PaginationControls } from "@/components/admin/pagination-controls";
 import {
   AlertDialog,
@@ -19,15 +33,17 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent } from "@/components/ui/card";
+import { FieldError } from "@/components/ui/field-error";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -51,7 +67,8 @@ import {
   SHOP_EXPORT_NAME,
   SHOP_OWNER_NAME,
 } from "@/lib/export-branding";
-import { addDays, formatDateLong, formatPHP, manilaNow, statusLabel } from "@/lib/shop";
+import { addDays, formatDateLong, formatPHP, manilaNow, statusLabel, statusTone } from "@/lib/shop";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/admin/reports")({
   component: ReportsPage,
@@ -74,6 +91,15 @@ const statusOptions = ["pending", "confirmed", "in_progress", "completed", "canc
 type ReportKind = (typeof reportOptions)[number]["value"];
 type PeriodPreset = (typeof periodOptions)[number]["value"];
 type ExportType = "csv" | "pdf";
+type ReportFilters = {
+  reportKind: ReportKind;
+  periodPreset: PeriodPreset;
+  from: string;
+  to: string;
+  category: string;
+  serviceName: string;
+  status: string;
+};
 
 type CatalogService = { id: string; name: string; category: string };
 type BookingRow = {
@@ -104,20 +130,28 @@ type ReportMetrics = {
 };
 type ReportPage = { rows: Array<BookingRow | ServiceRow>; total: number; metrics: ReportMetrics };
 type ExportData = { headers: string[]; rows: string[][]; summary: string[] };
+type Trend = {
+  direction: "up" | "down" | "flat";
+  label: string;
+  description: string;
+};
 
 function ReportsPage() {
-  const pageSize = 25;
+  const pageSize = 10;
   const today = manilaNow().date;
-  const initialRange = periodRange("this_month", today);
-  const [reportKind, setReportKind] = useState<ReportKind>("bookings");
-  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("this_month");
-  const [from, setFrom] = useState(initialRange.from);
-  const [to, setTo] = useState(initialRange.to);
-  const [category, setCategory] = useState("all");
-  const [serviceName, setServiceName] = useState("all");
-  const [status, setStatus] = useState("all");
+  const initialFilters = getInitialFilters(today);
+  const [draftFilters, setDraftFilters] = useState<ReportFilters>(initialFilters);
+  const [filters, setFilters] = useState<ReportFilters>(initialFilters);
   const [page, setPage] = useState(0);
   const [pendingExport, setPendingExport] = useState<ExportType | null>(null);
+  const { reportKind, from, to, status, category, serviceName } = filters;
+  const previousRange = useMemo(() => previousPeriodRange(from, to), [from, to]);
+  const customDateError =
+    draftFilters.periodPreset === "custom" && (!draftFilters.from || !draftFilters.to)
+      ? "Select both a start and end date."
+      : draftFilters.from > draftFilters.to
+        ? "The end date must be on or after the start date."
+        : undefined;
 
   const catalog = useQuery({
     queryKey: ["report-service-catalog"],
@@ -147,9 +181,20 @@ function ReportsPage() {
       }),
   });
 
-  useEffect(() => {
-    setPage(0);
-  }, [reportKind, from, to, status, category, serviceName]);
+  const comparison = useQuery({
+    queryKey: ["reports-comparison", { reportKind, previousRange, status, category, serviceName }],
+    queryFn: () =>
+      getReportPage({
+        reportKind,
+        from: previousRange.from,
+        to: previousRange.to,
+        status,
+        category,
+        serviceName,
+        limit: 1,
+        offset: 0,
+      }),
+  });
 
   const categories = useMemo(
     () =>
@@ -159,14 +204,24 @@ function ReportsPage() {
   const serviceOptions = useMemo(
     () =>
       (catalog.data ?? [])
-        .filter((item) => category === "all" || item.category === category)
+        .filter(
+          (item) => draftFilters.category === "all" || item.category === draftFilters.category,
+        )
         .sort((first, second) => first.name.localeCompare(second.name)),
-    [catalog.data, category],
+    [catalog.data, draftFilters.category],
   );
   const metrics = data.data?.metrics;
+  const comparisonMetrics = comparison.data?.metrics;
   const byStatus = Object.entries(metrics?.status_counts ?? {}).sort(([first], [second]) =>
     first.localeCompare(second),
   );
+  const statusTotal = Math.max(
+    1,
+    byStatus.reduce((total, [, count]) => total + count, 0),
+  );
+  const comparisonStatusGroups = comparisonMetrics
+    ? Object.keys(comparisonMetrics.status_counts ?? {}).length
+    : undefined;
   const preview = makeExportData(reportKind, data.data?.rows ?? [], metrics);
   const reportTitle =
     reportKind === "bookings"
@@ -182,45 +237,23 @@ function ReportsPage() {
     .join(" · ");
 
   function updatePeriod(value: PeriodPreset) {
-    setPeriodPreset(value);
-    if (value === "custom") return;
-    const range = periodRange(value, today);
-    setFrom(range.from);
-    setTo(range.to);
+    setDraftFilters((current) => {
+      if (value === "custom") return { ...current, periodPreset: value };
+      const range = periodRange(value, today);
+      return { ...current, periodPreset: value, ...range };
+    });
   }
 
-  const activeFilters = [
-    ...(reportKind !== "bookings"
-      ? [{ label: "Report", value: "Service activity", onClear: () => setReportKind("bookings") }]
-      : []),
-    ...(periodPreset === "custom"
-      ? [
-          {
-            label: "Period",
-            value: `${formatDateLong(from)} to ${formatDateLong(to)}`,
-            onClear: () => updatePeriod("this_month"),
-          },
-        ]
-      : []),
-    ...(category !== "all"
-      ? [{ label: "Category", value: category, onClear: () => setCategory("all") }]
-      : []),
-    ...(serviceName !== "all"
-      ? [{ label: "Service", value: serviceName, onClear: () => setServiceName("all") }]
-      : []),
-    ...(status !== "all"
-      ? [{ label: "Status", value: statusLabel(status), onClear: () => setStatus("all") }]
-      : []),
-  ];
+  function applyFilters() {
+    if (customDateError) return;
+    setFilters({ ...draftFilters });
+    setPage(0);
+  }
 
   function resetFilters() {
-    setReportKind("bookings");
-    setPeriodPreset("this_month");
-    setFrom(initialRange.from);
-    setTo(initialRange.to);
-    setCategory("all");
-    setServiceName("all");
-    setStatus("all");
+    const nextFilters = getInitialFilters(today);
+    setDraftFilters(nextFilters);
+    setFilters(nextFilters);
     setPage(0);
   }
 
@@ -258,13 +291,26 @@ function ReportsPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Reports"
-        description="Build booking-volume or service-activity reports for a selected period."
-        action={
+      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <span className="grid size-11 shrink-0 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
+            <BarChart3 className="size-5" aria-hidden="true" />
+          </span>
+          <div>
+            <h1 className="font-display text-2xl tracking-wide uppercase md:text-3xl">Reports</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              View booking volume and service activity for a selected period.
+            </p>
+          </div>
+        </div>
+        <div className="w-full sm:w-auto">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" disabled={!data.data?.total} className="uppercase">
+              <Button
+                variant="outline"
+                disabled={!data.data?.total}
+                className="w-full uppercase sm:w-auto"
+              >
                 <Download /> Export selected report
               </Button>
             </DropdownMenuTrigger>
@@ -277,122 +323,218 @@ function ReportsPage() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        }
-      />
+        </div>
+      </header>
 
-      <Card className="mb-6 border-border/70 bg-card/60">
-        <CardContent className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-4">
-          <FilterSelect
-            label="Report"
-            value={reportKind}
-            onValueChange={(value) => setReportKind(value as ReportKind)}
-            options={reportOptions}
-          />
-          <FilterSelect
-            label="Period"
-            value={periodPreset}
-            onValueChange={(value) => updatePeriod(value as PeriodPreset)}
-            options={periodOptions}
-          />
-          <FilterSelect
-            label="Service category"
-            value={category}
-            onValueChange={(value) => {
-              setCategory(value);
-              setServiceName("all");
-            }}
-            options={[
-              { value: "all", label: "All categories" },
-              ...categories.map((value) => ({ value, label: value })),
-            ]}
-          />
-          <FilterSelect
-            label="Booking status"
-            value={status}
-            onValueChange={setStatus}
-            options={[
-              { value: "all", label: "All statuses" },
-              ...statusOptions.map((value) => ({ value, label: statusLabel(value) })),
-            ]}
-          />
-          <div className="space-y-1.5 xl:col-span-2">
-            <Label>Specific service</Label>
-            <Select value={serviceName} onValueChange={setServiceName}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All services</SelectItem>
-                {serviceOptions.map((item) => (
-                  <SelectItem key={item.id} value={item.name}>
-                    {item.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      <Card className="mb-5 border-border/70 bg-card/60">
+        <CardContent className="p-4 sm:p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <Filter className="size-4 text-primary" aria-hidden="true" />
+            <h2 className="font-display text-base tracking-wide uppercase">Filter reports</h2>
           </div>
-          {periodPreset === "custom" && (
-            <>
-              <div className="space-y-1.5">
-                <Label htmlFor="report-from">From</Label>
-                <Input
-                  id="report-from"
-                  type="date"
-                  value={from}
-                  max={to}
-                  onChange={(event) => setFrom(event.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="report-to">To</Label>
-                <Input
-                  id="report-to"
-                  type="date"
-                  value={to}
-                  min={from}
-                  onChange={(event) => setTo(event.target.value)}
-                />
-              </div>
-            </>
-          )}
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-[minmax(0,.85fr)_minmax(0,.9fr)_minmax(0,1.25fr)_minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end">
+            <FilterSelect
+              label="Report"
+              value={draftFilters.reportKind}
+              onValueChange={(value) =>
+                setDraftFilters((current) => ({ ...current, reportKind: value as ReportKind }))
+              }
+              options={reportOptions}
+            />
+            <div className="min-w-0 space-y-1.5">
+              <Label>Service</Label>
+              <Select
+                value={draftFilters.serviceName}
+                onValueChange={(value) =>
+                  setDraftFilters((current) => ({ ...current, serviceName: value }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All services</SelectItem>
+                  {serviceOptions.map((item) => (
+                    <SelectItem key={item.id} value={item.name}>
+                      {item.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="min-w-0 space-y-1.5">
+              <Label>Period</Label>
+              <PeriodPicker
+                value={draftFilters.periodPreset}
+                from={draftFilters.from}
+                to={draftFilters.to}
+                error={customDateError}
+                onValueChange={updatePeriod}
+                onRangeChange={(range) =>
+                  setDraftFilters((current) => ({
+                    ...current,
+                    periodPreset: "custom",
+                    ...range,
+                  }))
+                }
+              />
+            </div>
+            <FilterSelect
+              label="Service category"
+              value={draftFilters.category}
+              onValueChange={(value) => {
+                setDraftFilters((current) => ({
+                  ...current,
+                  category: value,
+                  serviceName: "all",
+                }));
+              }}
+              options={[
+                { value: "all", label: "All categories" },
+                ...categories.map((value) => ({ value, label: value })),
+              ]}
+            />
+            <FilterSelect
+              label="Booking status"
+              value={draftFilters.status}
+              onValueChange={(value) =>
+                setDraftFilters((current) => ({ ...current, status: value }))
+              }
+              options={[
+                { value: "all", label: "All statuses" },
+                ...statusOptions.map((value) => ({ value, label: statusLabel(value) })),
+              ]}
+            />
+            <div className="flex gap-2 md:col-span-2 lg:col-span-1 lg:self-end">
+              <Button
+                type="button"
+                className="flex-1 whitespace-nowrap lg:flex-none"
+                onClick={applyFilters}
+                disabled={Boolean(customDateError)}
+              >
+                <Filter /> Apply filters
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1 whitespace-nowrap lg:flex-none"
+                onClick={resetFilters}
+              >
+                <RotateCcw /> Reset
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
-      <ActiveFilterChips filters={activeFilters} onReset={resetFilters} />
 
-      <div className="mb-6 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-        <Badge variant="outline">{reportTitle}</Badge>
-        <span>{reportScope}</span>
-      </div>
+      <Card className="mb-5 border-border/70 bg-card/60">
+        <CardContent className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
+          <span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary">
+            <CalendarDays className="size-4" aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="font-display text-sm tracking-wide uppercase">{reportTitle}</h2>
+            <p className="truncate text-sm text-muted-foreground">{formatDateRange(from, to)}</p>
+          </div>
+        </CardContent>
+      </Card>
+
       {reportKind === "bookings" ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat label="Total bookings" value={String(metrics?.total_bookings ?? 0)} />
-          <Stat label="Completed jobs" value={String(metrics?.completed_bookings ?? 0)} />
-          <Stat label="Completed revenue" value={formatPHP(metrics?.completed_value ?? 0)} />
-          <Stat label="Status groups" value={String(byStatus.length)} />
+          <Stat
+            label="Total bookings"
+            value={String(metrics?.total_bookings ?? 0)}
+            icon={CalendarDays}
+            iconClassName="bg-chart-4/15 text-chart-4"
+            trend={makeTrend(metrics?.total_bookings, comparisonMetrics?.total_bookings)}
+          />
+          <Stat
+            label="Completed jobs"
+            value={String(metrics?.completed_bookings ?? 0)}
+            icon={CheckCircle2}
+            iconClassName="bg-emerald-500/15 text-emerald-400"
+            trend={makeTrend(metrics?.completed_bookings, comparisonMetrics?.completed_bookings)}
+          />
+          <Stat
+            label="Completed revenue"
+            value={formatPHP(metrics?.completed_value ?? 0)}
+            icon={CircleDollarSign}
+            iconClassName="bg-accent/15 text-accent"
+            trend={makeTrend(metrics?.completed_value, comparisonMetrics?.completed_value)}
+          />
+          <Stat
+            label="Status groups"
+            value={String(byStatus.length)}
+            icon={BarChart3}
+            iconClassName="bg-chart-4/15 text-chart-4"
+            trend={makeTrend(byStatus.length, comparisonStatusGroups)}
+          />
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat label="Service entries" value={String(data.data?.total ?? 0)} />
-          <Stat label="Bookings served" value={String(metrics?.total_bookings ?? 0)} />
-          <Stat label="Completed entries" value={String(metrics?.completed_rows ?? 0)} />
-          <Stat label="Completed service value" value={formatPHP(metrics?.completed_value ?? 0)} />
+          <Stat
+            label="Service entries"
+            value={String(data.data?.total ?? 0)}
+            icon={Wrench}
+            trend={makeTrend(data.data?.total, comparison.data?.total)}
+          />
+          <Stat
+            label="Bookings served"
+            value={String(metrics?.total_bookings ?? 0)}
+            icon={CalendarDays}
+            iconClassName="bg-chart-4/15 text-chart-4"
+            trend={makeTrend(metrics?.total_bookings, comparisonMetrics?.total_bookings)}
+          />
+          <Stat
+            label="Completed entries"
+            value={String(metrics?.completed_rows ?? 0)}
+            icon={CheckCircle2}
+            iconClassName="bg-emerald-500/15 text-emerald-400"
+            trend={makeTrend(metrics?.completed_rows, comparisonMetrics?.completed_rows)}
+          />
+          <Stat
+            label="Completed service value"
+            value={formatPHP(metrics?.completed_value ?? 0)}
+            icon={CircleDollarSign}
+            iconClassName="bg-accent/15 text-accent"
+            trend={makeTrend(metrics?.completed_value, comparisonMetrics?.completed_value)}
+          />
         </div>
       )}
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_1.5fr]">
+      <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(16rem,.82fr)_minmax(0,1.9fr)]">
         <Card className="border-border/70 bg-card/60">
           <CardContent className="p-5">
-            <h2 className="font-display text-sm tracking-widest uppercase">Status breakdown</h2>
+            <div className="flex items-center gap-2">
+              <BarChart3 className="size-4 text-primary" aria-hidden="true" />
+              <h2 className="font-display text-sm tracking-wide uppercase">Status breakdown</h2>
+            </div>
             {byStatus.length === 0 ? (
               <p className="mt-4 text-sm text-muted-foreground">
                 Nothing to report for this selection.
               </p>
             ) : (
-              <ul className="mt-4 space-y-2 text-sm">
+              <ul className="mt-5 space-y-4 text-sm">
                 {byStatus.map(([item, count]) => (
-                  <li key={item} className="flex justify-between border-b border-border/50 pb-2">
-                    <span>{statusLabel(item)}</span>
-                    <span className="text-muted-foreground">{count}</span>
+                  <li key={item}>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span
+                          className={cn("size-2.5 shrink-0 rounded-full", statusBarTone(item))}
+                          aria-hidden="true"
+                        />
+                        <span className="truncate">{statusLabel(item)}</span>
+                      </span>
+                      <span className="font-medium">{count}</span>
+                    </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className={cn("h-full rounded-full", statusBarTone(item))}
+                        style={{
+                          width: `${Math.max(6, Math.round((count / statusTotal) * 100))}%`,
+                        }}
+                      />
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -401,8 +543,17 @@ function ReportsPage() {
         </Card>
         <Card className="border-border/70 bg-card/60">
           <CardContent className="overflow-x-auto p-0">
-            <div className="border-b border-border px-5 py-3 text-sm text-muted-foreground">
-              Preview: {preview.rows.length} of {data.data?.total ?? 0} {rowLabel}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
+              <div className="flex items-center gap-2">
+                <ListFilter className="size-4 text-primary" aria-hidden="true" />
+                <h2 className="font-display text-sm tracking-wide uppercase">
+                  Recent {reportKind === "bookings" ? "bookings" : "service activity"}
+                </h2>
+              </div>
+              <span className="text-xs text-muted-foreground">
+                Page {data.data?.total ? page + 1 : 0} of{" "}
+                {Math.max(1, Math.ceil((data.data?.total ?? 0) / pageSize))}
+              </span>
             </div>
             <Table className="admin-data-table">
               <TableHeader>
@@ -419,9 +570,21 @@ function ReportsPage() {
                       <TableCell
                         key={`${cellIndex}-${cell}`}
                         data-label={preview.headers[cellIndex]}
-                        className="whitespace-nowrap text-sm"
+                        className="text-sm"
                       >
-                        {cell}
+                        {cellIndex === 3 ? (
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[10px] uppercase",
+                              statusTone(data.data?.rows[index]?.status ?? ""),
+                            )}
+                          >
+                            {cell}
+                          </Badge>
+                        ) : (
+                          cell
+                        )}
                       </TableCell>
                     ))}
                   </TableRow>
@@ -492,7 +655,7 @@ function FilterSelect({
   options: ReadonlyArray<{ value: string; label: string }>;
 }) {
   return (
-    <div className="space-y-1.5">
+    <div className="min-w-0 space-y-1.5">
       <Label>{label}</Label>
       <Select value={value} onValueChange={onValueChange}>
         <SelectTrigger>
@@ -506,6 +669,106 @@ function FilterSelect({
           ))}
         </SelectContent>
       </Select>
+    </div>
+  );
+}
+
+function PeriodPicker({
+  value,
+  from,
+  to,
+  error,
+  onValueChange,
+  onRangeChange,
+}: {
+  value: PeriodPreset;
+  from: string;
+  to: string;
+  error?: string | undefined;
+  onValueChange: (value: PeriodPreset) => void;
+  onRangeChange: (range: { from: string; to: string }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedRange = from
+    ? { from: dateFromIso(from), to: to ? dateFromIso(to) : undefined }
+    : undefined;
+  const label =
+    value === "custom"
+      ? formatDateRange(from, to)
+      : (periodOptions.find((option) => option.value === value)?.label ?? "Select period");
+
+  return (
+    <div className="space-y-1.5">
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            aria-label="Select report period"
+            aria-invalid={Boolean(error)}
+            title={label}
+            className="w-full justify-start px-3 text-left font-normal"
+          >
+            <CalendarRange className="mr-2 size-4 shrink-0 text-muted-foreground" />
+            <span
+              className={cn("truncate", value === "custom" && !from && "text-muted-foreground")}
+            >
+              {label}
+            </span>
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-auto max-w-[calc(100vw-2rem)] overflow-hidden p-0"
+        >
+          <div className="grid grid-cols-2 gap-1 border-b border-border p-2 sm:grid-cols-4">
+            {periodOptions.map((option) => (
+              <Button
+                key={option.value}
+                type="button"
+                variant={value === option.value ? "secondary" : "ghost"}
+                size="sm"
+                className="justify-start whitespace-nowrap sm:justify-center"
+                onClick={() => onValueChange(option.value)}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+          {value === "custom" && (
+            <>
+              <Calendar
+                mode="range"
+                selected={selectedRange}
+                {...(selectedRange?.from ? { defaultMonth: selectedRange.from } : {})}
+                numberOfMonths={2}
+                onSelect={(range) =>
+                  onRangeChange({
+                    from: range?.from ? format(range.from, "yyyy-MM-dd") : "",
+                    to: range?.to ? format(range.to, "yyyy-MM-dd") : "",
+                  })
+                }
+              />
+              <div className="flex items-center justify-between gap-3 border-t border-border px-3 py-2">
+                <span className="min-w-0 truncate text-xs text-muted-foreground">
+                  {from ? formatDateRange(from, to) : "Choose a start and end date"}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="shrink-0"
+                  disabled={!from}
+                  onClick={() => onRangeChange({ from: "", to: "" })}
+                >
+                  Clear
+                </Button>
+              </div>
+            </>
+          )}
+        </PopoverContent>
+      </Popover>
+      <FieldError message={error} />
     </div>
   );
 }
@@ -599,6 +862,35 @@ function makeExportData(
   };
 }
 
+function getInitialFilters(today: string): ReportFilters {
+  const range = periodRange("this_month", today);
+  return {
+    reportKind: "bookings",
+    periodPreset: "this_month",
+    ...range,
+    category: "all",
+    serviceName: "all",
+    status: "all",
+  };
+}
+
+function dateFromIso(value: string) {
+  return new Date(`${value}T12:00:00`);
+}
+
+function formatDateRange(from: string, to: string) {
+  if (!from) return "Select custom dates";
+
+  const fromDate = dateFromIso(from);
+  const fromLabel = format(fromDate, "MMM d, yyyy");
+  if (!to) return `${fromLabel} to Select end date`;
+
+  const toDate = dateFromIso(to);
+  return fromDate.getFullYear() === toDate.getFullYear()
+    ? `${format(fromDate, "MMM d")} to ${format(toDate, "MMM d, yyyy")}`
+    : `${fromLabel} to ${format(toDate, "MMM d, yyyy")}`;
+}
+
 function periodRange(preset: Exclude<PeriodPreset, "custom">, today: string) {
   if (preset === "this_week") {
     const day = new Date(`${today}T00:00:00`).getDay();
@@ -606,6 +898,40 @@ function periodRange(preset: Exclude<PeriodPreset, "custom">, today: string) {
   }
   if (preset === "this_year") return { from: `${today.slice(0, 4)}-01-01`, to: today };
   return { from: `${today.slice(0, 8)}01`, to: today };
+}
+
+function previousPeriodRange(from: string, to: string) {
+  const inclusiveDays = Math.max(
+    1,
+    Math.round((Date.parse(`${to}T12:00:00`) - Date.parse(`${from}T12:00:00`)) / 86_400_000) + 1,
+  );
+  return {
+    from: addDays(from, -inclusiveDays),
+    to: addDays(from, -1),
+  };
+}
+
+function makeTrend(
+  current: number | string | null | undefined,
+  previous: number | string | null | undefined,
+): Trend {
+  if (current === undefined || previous === undefined)
+    return { direction: "flat", label: "—", description: "Comparing previous period" };
+
+  const currentValue = Number(current ?? 0);
+  const previousValue = Number(previous ?? 0);
+  if (previousValue === 0) {
+    if (currentValue === 0)
+      return { direction: "flat", label: "0%", description: "vs. previous period" };
+    return { direction: "up", label: "New", description: "vs. previous period" };
+  }
+
+  const change = ((currentValue - previousValue) / Math.abs(previousValue)) * 100;
+  return {
+    direction: change > 0 ? "up" : change < 0 ? "down" : "flat",
+    label: `${Math.abs(change).toFixed(change >= 10 ? 0 : 1)}%`,
+    description: "vs. previous period",
+  };
 }
 
 function exportCsv(data: ExportData, reportKind: ReportKind, from: string, to: string) {
@@ -682,13 +1008,87 @@ function downloadBlob(contents: string, filename: string, type: string) {
 function fileName(reportKind: ReportKind) {
   return reportKind === "services" ? "service-activity-report" : "booking-volume-report";
 }
-function Stat({ label, value }: { label: string; value: string }) {
+
+function statusBarTone(status: string) {
+  if (status === "completed") return "bg-emerald-500";
+  if (status === "cancelled" || status === "no_show") return "bg-destructive";
+  if (status === "in_progress") return "bg-accent";
+  if (status === "confirmed") return "bg-primary";
+  return "bg-muted-foreground";
+}
+
+function Stat({
+  label,
+  value,
+  trend,
+  icon: Icon,
+  iconClassName,
+}: {
+  label: string;
+  value: string;
+  trend: Trend;
+  icon: LucideIcon;
+  iconClassName?: string;
+}) {
   return (
     <Card className="border-border/70 bg-card/60">
-      <CardContent className="p-5">
-        <p className="text-xs tracking-wider text-muted-foreground uppercase">{label}</p>
-        <p className="mt-2 font-display text-2xl text-primary">{value}</p>
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex items-center gap-3">
+          <span
+            className={cn(
+              "grid size-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary",
+              iconClassName,
+            )}
+          >
+            <Icon className="size-4" aria-hidden="true" />
+          </span>
+          <p className="text-xs tracking-wider text-muted-foreground uppercase">{label}</p>
+        </div>
+        <div className="mt-3 flex items-end justify-between gap-3">
+          <div>
+            <p className="font-display text-2xl text-primary">{value}</p>
+            <p
+              className={cn(
+                "mt-2 flex items-center gap-1 text-xs font-medium",
+                trend.direction === "up" && "text-emerald-500",
+                trend.direction === "down" && "text-destructive",
+                trend.direction === "flat" && "text-muted-foreground",
+              )}
+            >
+              {trend.direction === "up" && <TrendingUp className="size-3.5" aria-hidden="true" />}
+              {trend.direction === "down" && (
+                <TrendingDown className="size-3.5" aria-hidden="true" />
+              )}
+              {trend.label}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">{trend.description}</p>
+          </div>
+          <TrendLine direction={trend.direction} />
+        </div>
       </CardContent>
     </Card>
+  );
+}
+
+function TrendLine({ direction }: Pick<Trend, "direction">) {
+  const path =
+    direction === "up"
+      ? "M2 25 L13 16 L23 19 L34 8 L46 12 L58 2"
+      : direction === "down"
+        ? "M2 4 L13 13 L23 10 L34 21 L46 17 L58 28"
+        : "M2 16 L13 16 L23 15 L34 16 L46 15 L58 16";
+  return (
+    <svg
+      viewBox="0 0 60 30"
+      className={cn(
+        "h-8 w-14 shrink-0",
+        direction === "up" && "text-emerald-500",
+        direction === "down" && "text-destructive",
+        direction === "flat" && "text-muted-foreground",
+      )}
+      aria-hidden="true"
+    >
+      <path d={path} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
   );
 }

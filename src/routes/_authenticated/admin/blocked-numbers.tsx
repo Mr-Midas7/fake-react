@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { FieldError } from "@/components/ui/field-error";
 import {
   Dialog,
   DialogContent,
@@ -102,10 +103,10 @@ function BlockedNumbersPage() {
     onError: (err: Error) => {
       const msg = err.message.toLowerCase();
       if (msg.includes("unique") || msg.includes("duplicate") || msg.includes("already blocked")) {
-        toast.error("This phone number is already blocked.");
+        setPhoneError("This phone number is already blocked.");
       } else {
         console.error("Block failed:", err);
-        toast.error(`Could not block the number: ${err.message}`);
+        setPhoneError(`Could not block the number: ${err.message}`);
       }
     },
   });
@@ -138,7 +139,6 @@ function BlockedNumbersPage() {
       normalizedPhone = phoneSchema.parse(phone);
     } catch {
       setPhoneError(PHONE_VALIDATION_MESSAGE);
-      toast.error(PHONE_VALIDATION_MESSAGE);
       return;
     }
     add.mutate(normalizedPhone);
@@ -166,7 +166,7 @@ function BlockedNumbersPage() {
 
       <Card className="border-border/70 bg-card/60">
         <CardContent className="overflow-x-auto p-0">
-          <Table>
+          <Table className="admin-data-table">
             <TableHeader>
               <TableRow>
                 <TableHead>Phone</TableHead>
@@ -178,16 +178,20 @@ function BlockedNumbersPage() {
             <TableBody>
               {blocked.data?.map((b) => (
                 <TableRow key={b.id}>
-                  <TableCell className="font-mono text-sm">{b.phone}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{b.reason || "—"}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
+                  <TableCell data-label="Phone" className="font-mono text-sm">
+                    {b.phone}
+                  </TableCell>
+                  <TableCell data-label="Reason" className="text-sm text-muted-foreground">
+                    {b.reason || "—"}
+                  </TableCell>
+                  <TableCell data-label="Blocked on" className="text-xs text-muted-foreground">
                     {new Date(b.created_at).toLocaleDateString("en-PH", {
                       year: "numeric",
                       month: "short",
                       day: "numeric",
                     })}
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell data-label="Action" className="text-right">
                     <Button
                       size="sm"
                       variant="ghost"
@@ -238,7 +242,7 @@ function BlockedNumbersPage() {
                 placeholder="09171234567"
                 aria-invalid={!!phoneError}
               />
-              {phoneError && <p className="text-xs text-destructive">{phoneError}</p>}
+              <FieldError message={phoneError} />
             </div>
             <div className="space-y-1.5">
               <Label>Reason (optional)</Label>

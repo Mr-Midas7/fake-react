@@ -12,6 +12,13 @@ export const SHOP = {
   noticeHours: 48,
 };
 
+/** Default copy shown on the customer booking form; administrators can replace it in Settings. */
+export const DEFAULT_BOOKING_TERMS = `Bookings are subject to shop confirmation. Please arrive 15 minutes before your slot. Late arrivals beyond 30 minutes may be rescheduled. Quoted prices are starting rates; parts and additional labor are billed separately. The shop is not liable for personal items left on the unit.
+
+Cancellations must be made at least ${SHOP.noticeHours} hours before the schedule.
+
+We use your name, contact details, motorcycle details, selected services, and notes only to manage this booking, contact you about it, and provide shop services. We do not sell your information.`;
+
 export const PRODUCT_CATEGORIES = [
   { value: "part", label: "Parts" },
   { value: "accessory", label: "Accessories" },
@@ -268,15 +275,15 @@ export function isReferenceCode(value: string) {
   return REFERENCE_CODE_PATTERN.test(normalizeReferenceCode(value));
 }
 
-/** Booking rule: the slot must start at least 48 hours from now (Manila). */
-export function isSlotBookable(dateIso: string, time: string) {
-  return manilaTimestamp(dateIso, time) - Date.now() >= SHOP.noticeHours * 3600 * 1000;
+/** Booking rule: the slot must start after the configured lead time (Manila). */
+export function isSlotBookable(dateIso: string, time: string, minimumLeadHours = SHOP.noticeHours) {
+  return manilaTimestamp(dateIso, time) - Date.now() >= minimumLeadHours * 3600 * 1000;
 }
 
-export function earliestBookableDate() {
+export function earliestBookableDate(minimumLeadHours = SHOP.noticeHours) {
   const now = manilaNow();
   const ts = manilaTimestamp(now.date, `${now.time}:00`);
-  const cutoff = ts + SHOP.noticeHours * 3600 * 1000;
+  const cutoff = ts + minimumLeadHours * 3600 * 1000;
   return new Date(cutoff).toLocaleDateString("en-CA", {
     timeZone: "Asia/Manila",
     year: "numeric",

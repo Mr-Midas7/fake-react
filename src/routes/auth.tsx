@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import logo from "@/assets/logo-shp.png.asset.json";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
@@ -66,7 +67,12 @@ function AuthPage() {
       }
       navigate({ to: "/admin", replace: true });
     },
-    onError: (e: Error) => toast.error(e.message || "Invalid email or password."),
+    onError: (e: Error) => {
+      setErrors((current) => ({
+        ...current,
+        password: e.message || "Invalid email or password.",
+      }));
+    },
   });
 
   function validate() {
@@ -110,7 +116,7 @@ function AuthPage() {
                 required
                 aria-invalid={!!errors.email}
               />
-              {errors.email && <p className="text-xs text-destructive">{errors.email}</p>}
+              <FieldError message={errors.email} />
             </div>
             <div className="space-y-1.5">
               <Label>Password</Label>
@@ -127,7 +133,7 @@ function AuthPage() {
                 required
                 aria-invalid={!!errors.password}
               />
-              {errors.password && <p className="text-xs text-destructive">{errors.password}</p>}
+              <FieldError message={errors.password} />
             </div>
             <Button
               type="submit"

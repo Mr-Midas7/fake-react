@@ -43,6 +43,7 @@ export type Assignment = {
 export type AvailabilitySource = {
   from: string;
   to: string;
+  minimumBookingLeadHours?: number;
   totalDurationMinutes?: number;
   slots: TimeSlot[];
   blocks: DateBlock[];
@@ -132,7 +133,7 @@ function computeAvailableSlotsFromSource(
       parseInt(slot.startTime.slice(0, 2)) * 60 + parseInt(slot.startTime.slice(3, 5));
     const slotEndMin = slotStartMin + totalDuration;
 
-    const notBookable = !isSlotBookable(date, slot.startTime);
+    const notBookable = !isSlotBookable(date, slot.startTime, availability.minimumBookingLeadHours);
 
     const blocked = availability.blocks.some((b) => {
       if (b.date !== date) return false;

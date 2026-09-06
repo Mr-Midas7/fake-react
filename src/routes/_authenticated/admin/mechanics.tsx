@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/admin/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { FieldError } from "@/components/ui/field-error";
 import {
   Dialog,
   DialogContent,
@@ -62,7 +63,9 @@ function MechanicsPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<CrewMember | null>(null);
   const [form, setForm] = useState({ ...blank });
-  const [formError, setFormError] = useState("");
+  const [formErrors, setFormErrors] = useState<
+    Partial<Record<"name" | "phone", string | undefined>>
+  >({});
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "deactivated">("all");
   const [filterName, setFilterName] = useState("");
 
@@ -103,7 +106,7 @@ function MechanicsPage() {
     },
     onError: (err: Error) => {
       console.error("Add failed:", err);
-      toast.error(`Add failed: ${err.message}`);
+      setFormErrors({ name: `Add failed: ${err.message}` });
     },
   });
 
@@ -151,16 +154,14 @@ function MechanicsPage() {
 
   const handleSave = async () => {
     if (form.name.trim().length < 2) {
-      setFormError("Enter a mechanic name with at least 2 characters.");
-      toast.error("Enter a mechanic name with at least 2 characters.");
+      setFormErrors({ name: "Enter a mechanic name with at least 2 characters." });
       return;
     }
     if (form.phone && !normalizePhilippineMobile(form.phone)) {
-      setFormError(PHONE_VALIDATION_MESSAGE);
-      toast.error(PHONE_VALIDATION_MESSAGE);
+      setFormErrors({ phone: PHONE_VALIDATION_MESSAGE });
       return;
     }
-    setFormError("");
+    setFormErrors({});
     if (editing) {
       const { error } = await supabase
         .from("crew_members")
@@ -192,7 +193,7 @@ function MechanicsPage() {
             onClick={() => {
               setEditing(null);
               setForm({ ...blank });
-              setFormError("");
+              setFormErrors({});
               setOpen(true);
             }}
           >
@@ -301,7 +302,7 @@ function MechanicsPage() {
                               role: c.role,
                               phone: c.phone ? toLocalPhilippineMobile(c.phone) : "",
                             });
-                            setFormError("");
+                            setFormErrors({});
                             setOpen(true);
                           }}
                         >
@@ -341,9 +342,11 @@ function MechanicsPage() {
                 value={form.name}
                 onChange={(e) => {
                   setForm({ ...form, name: e.target.value });
-                  setFormError("");
+                  setFormErrors((current) => ({ ...current, name: undefined }));
                 }}
+                aria-invalid={!!formErrors.name}
               />
+              <FieldError message={formErrors.name} />
             </div>
             <div className="space-y-1.5">
               <Label>Role</Label>
@@ -351,7 +354,6 @@ function MechanicsPage() {
                 value={form.role}
                 onChange={(e) => {
                   setForm({ ...form, role: e.target.value });
-                  setFormError("");
                 }}
               />
             </div>
@@ -364,13 +366,13 @@ function MechanicsPage() {
                 inputMode="numeric"
                 onChange={(e) => {
                   setForm({ ...form, phone: sanitizePhilippineMobileInput(e.target.value) });
-                  setFormError("");
+                  setFormErrors((current) => ({ ...current, phone: undefined }));
                 }}
                 placeholder="09171234567"
-                aria-invalid={formError === PHONE_VALIDATION_MESSAGE}
+                aria-invalid={!!formErrors.phone}
               />
+              <FieldError message={formErrors.phone} />
             </div>
-            {formError && <p className="text-xs text-destructive">{formError}</p>}
           </div>
           <DialogFooter>
             <Button onClick={handleSave} disabled={add.isPending || !form.name.trim()}>

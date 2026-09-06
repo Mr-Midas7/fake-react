@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FieldError } from "@/components/ui/field-error";
 import {
   Dialog,
   DialogContent,
@@ -34,6 +35,7 @@ import {
 } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
 import { formatDateLong, shopTimeOptions } from "@/lib/shop";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/admin/availability")({
   component: AvailabilityPage,
@@ -128,6 +130,12 @@ function AvailabilityPage() {
   const [assignShift, setAssignShift] = useState("whole-day");
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
+  const [filterErrors, setFilterErrors] = useState<
+    Partial<Record<"customStart" | "customEnd", string | undefined>>
+  >({});
+  const [assignmentErrors, setAssignmentErrors] = useState<
+    Partial<Record<"dates" | "mechanic" | "customStart" | "customEnd", string | undefined>>
+  >({});
 
   const crew = useQuery({
     queryKey: ["crew-active"],
@@ -196,14 +204,18 @@ function AvailabilityPage() {
     onError: (err: Error) => {
       const msg = err.message.toLowerCase();
       if (msg.includes("unique") || msg.includes("duplicate")) {
-        toast.error(
-          "A schedule for this crew on this date already exists. Remove or edit it first.",
-        );
+        setAssignmentErrors({
+          dates: "A schedule for this crew on this date already exists. Remove or edit it first.",
+        });
       } else if (msg.includes("foreign")) {
-        toast.error("Referenced crew member no longer exists. Refresh the page and try again.");
+        setAssignmentErrors({
+          mechanic: "Referenced crew member no longer exists. Refresh the page and try again.",
+        });
       } else {
         console.error("Schedule save failed:", err);
-        toast.error(`Could not save the schedule. Please try again: ${err.message}`);
+        setAssignmentErrors({
+          dates: `Could not save the schedule. Please try again: ${err.message}`,
+        });
       }
     },
   });
@@ -274,12 +286,16 @@ function AvailabilityPage() {
 
   function applyAssignmentFilter() {
     if (filterPeriod === "custom") {
+      const nextErrors: Partial<Record<"customStart" | "customEnd", string>> = {};
       if (!customPeriodStart || !customPeriodEnd) {
-        toast.error("Choose a custom period start and end date.");
-        return;
+        if (!customPeriodStart) nextErrors.customStart = "Choose a custom period start date.";
+        if (!customPeriodEnd) nextErrors.customEnd = "Choose a custom period end date.";
       }
-      if (customPeriodStart > customPeriodEnd) {
-        toast.error("The custom period end must be after the start date.");
+      if (customPeriodStart && customPeriodEnd && customPeriodStart > customPeriodEnd) {
+        nextErrors.customEnd = "The custom period end must be after the start date.";
+      }
+      setFilterErrors(nextErrors);
+      if (Object.keys(nextErrors).length) {
         return;
       }
     }
@@ -302,8 +318,12 @@ function AvailabilityPage() {
   }
 
   const handleSave = async () => {
-    if (!assignMechanic || assignDateStrs.length === 0) {
-      toast.error("Please select at least one working day and a mechanic");
+    const nextErrors: Partial<Record<"dates" | "mechanic" | "customStart" | "customEnd", string>> =
+      {};
+    if (assignDateStrs.length === 0) nextErrors.dates = "Select at least one working day.";
+    if (!assignMechanic) nextErrors.mechanic = "Select a mechanic.";
+    if (Object.keys(nextErrors).length) {
+      setAssignmentErrors(nextErrors);
       return;
     }
 
@@ -315,7 +335,7 @@ function AvailabilityPage() {
     const newDateStrs = assignDateStrs.filter((date) => !existingDates.has(date));
 
     if (newDateStrs.length === 0) {
-      toast.error("The mechanic is already assigned on each selected day");
+      setAssignmentErrors({ dates: "The mechanic is already assigned on each selected day." });
       return;
     }
 
@@ -326,11 +346,14 @@ function AvailabilityPage() {
 
     if (assignShift === "custom") {
       if (!customStart || !customEnd) {
-        toast.error("Please select a start and end time");
+        setAssignmentErrors({
+          ...(customStart ? {} : { customStart: "Select a start time." }),
+          ...(customEnd ? {} : { customEnd: "Select an end time." }),
+        });
         return;
       }
       if (customStart >= customEnd) {
-        toast.error("End time must be after start time");
+        setAssignmentErrors({ customEnd: "End time must be after start time." });
         return;
       }
       startTime = customStart;
@@ -342,6 +365,7 @@ function AvailabilityPage() {
     }
 
     try {
+      setAssignmentErrors({});
       await saveSchedule.mutateAsync({
         crew_id: assignMechanic,
         schedule_dates: newDateStrs,
@@ -355,13 +379,9 @@ function AvailabilityPage() {
       setCustomStart("");
       setCustomEnd("");
       setDialogOpen(false);
-      if (skippedDays > 0) {
-        toast.info(
-          `${skippedDays} ${skippedDays === 1 ? "day was" : "days were"} already assigned and left unchanged`,
-        );
-      }
+      void skippedDays;
     } catch {
-      // Error already surfaced via mutation's onError toast
+      // Error is shown inline by the mutation callback.
     }
   };
 
@@ -465,8 +485,13 @@ function AvailabilityPage() {
                     type="date"
                     value={customPeriodStart}
                     max={customPeriodEnd || undefined}
-                    onChange={(event) => setCustomPeriodStart(event.target.value)}
+                    onChange={(event) => {
+                      setCustomPeriodStart(event.target.value);
+                      setFilterErrors((current) => ({ ...current, customStart: undefined }));
+                    }}
+                    aria-invalid={!!filterErrors.customStart}
                   />
+                  <FieldError message={filterErrors.customStart} />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="crew-period-end">Period end</Label>
@@ -475,8 +500,13 @@ function AvailabilityPage() {
                     type="date"
                     value={customPeriodEnd}
                     min={customPeriodStart || undefined}
-                    onChange={(event) => setCustomPeriodEnd(event.target.value)}
+                    onChange={(event) => {
+                      setCustomPeriodEnd(event.target.value);
+                      setFilterErrors((current) => ({ ...current, customEnd: undefined }));
+                    }}
+                    aria-invalid={!!filterErrors.customEnd}
                   />
+                  <FieldError message={filterErrors.customEnd} />
                 </div>
               </>
             )}
@@ -573,8 +603,11 @@ function AvailabilityPage() {
               <Calendar
                 mode="multiple"
                 selected={assignDates}
-                onSelect={(dates) => setAssignDates(dates ?? [])}
-                className="border-border/70"
+                onSelect={(dates) => {
+                  setAssignDates(dates ?? []);
+                  setAssignmentErrors((current) => ({ ...current, dates: undefined }));
+                }}
+                className={cn("border-border/70", assignmentErrors.dates && "border-destructive")}
                 classNames={{
                   months: "w-full",
                   month: "w-full",
@@ -589,16 +622,20 @@ function AvailabilityPage() {
                   ? "Choose one or more days for this crew member."
                   : `${assignDateStrs.length} ${assignDateStrs.length === 1 ? "day" : "days"} selected.`}
               </p>
+              <FieldError message={assignmentErrors.dates} />
             </div>
 
             <div className="space-y-1.5">
               <Label>Mechanic</Label>
               <Select
                 value={assignMechanic}
-                onValueChange={setAssignMechanic}
+                onValueChange={(value) => {
+                  setAssignMechanic(value);
+                  setAssignmentErrors((current) => ({ ...current, mechanic: undefined }));
+                }}
                 disabled={crew.isLoading}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger className="w-full" aria-invalid={!!assignmentErrors.mechanic}>
                   <SelectValue placeholder="Select a mechanic" />
                 </SelectTrigger>
                 <SelectContent>
@@ -609,6 +646,7 @@ function AvailabilityPage() {
                   ))}
                 </SelectContent>
               </Select>
+              <FieldError message={assignmentErrors.mechanic} />
             </div>
 
             <div className="space-y-1.5">
@@ -637,8 +675,14 @@ function AvailabilityPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label>Start</Label>
-                  <Select value={customStart} onValueChange={setCustomStart}>
-                    <SelectTrigger className="w-full">
+                  <Select
+                    value={customStart}
+                    onValueChange={(value) => {
+                      setCustomStart(value);
+                      setAssignmentErrors((current) => ({ ...current, customStart: undefined }));
+                    }}
+                  >
+                    <SelectTrigger className="w-full" aria-invalid={!!assignmentErrors.customStart}>
                       <SelectValue placeholder="Start time" />
                     </SelectTrigger>
                     <SelectContent>
@@ -649,11 +693,18 @@ function AvailabilityPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <FieldError message={assignmentErrors.customStart} />
                 </div>
                 <div className="space-y-1">
                   <Label>End</Label>
-                  <Select value={customEnd} onValueChange={setCustomEnd}>
-                    <SelectTrigger className="w-full">
+                  <Select
+                    value={customEnd}
+                    onValueChange={(value) => {
+                      setCustomEnd(value);
+                      setAssignmentErrors((current) => ({ ...current, customEnd: undefined }));
+                    }}
+                  >
+                    <SelectTrigger className="w-full" aria-invalid={!!assignmentErrors.customEnd}>
                       <SelectValue placeholder="End time" />
                     </SelectTrigger>
                     <SelectContent>
@@ -664,20 +715,13 @@ function AvailabilityPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <FieldError message={assignmentErrors.customEnd} />
                 </div>
               </div>
             )}
           </div>
           <DialogFooter>
-            <Button
-              onClick={handleSave}
-              disabled={
-                !assignMechanic ||
-                assignDateStrs.length === 0 ||
-                (assignShift === "custom" && (!customStart || !customEnd)) ||
-                saveSchedule.isPending
-              }
-            >
+            <Button onClick={handleSave} disabled={saveSchedule.isPending}>
               {saveSchedule.isPending && <Loader2 className="animate-spin" />}
               Save working days
             </Button>

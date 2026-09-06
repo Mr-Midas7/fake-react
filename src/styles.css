@@ -233,8 +233,10 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 1rem;
+    min-width: 0;
     padding: 0.65rem 0.75rem;
     border: 0;
+    overflow-wrap: anywhere;
     text-align: right;
   }
 
@@ -247,6 +249,11 @@
     letter-spacing: 0.05em;
     text-align: left;
     text-transform: uppercase;
+  }
+
+  .admin-data-table td[data-label] > * {
+    min-width: 0;
+    max-width: 100%;
   }
 
   .admin-data-table td:not([data-label]) {

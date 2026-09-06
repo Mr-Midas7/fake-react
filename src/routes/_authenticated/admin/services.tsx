@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/admin/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { FieldError } from "@/components/ui/field-error";
 import {
   Dialog,
   DialogContent,
@@ -66,7 +67,9 @@ function ServicesAdmin() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Service | null>(null);
   const [form, setForm] = useState({ ...blank });
-  const [formError, setFormError] = useState("");
+  const [formErrors, setFormErrors] = useState<
+    Partial<Record<"name" | "category" | "duration" | "price", string | undefined>>
+  >({});
   const [filterCategory, setFilterCategory] = useState<string>("");
   const hasValidNewPrice =
     editing !== null ||
@@ -116,7 +119,7 @@ function ServicesAdmin() {
       setForm({ ...blank });
       qc.invalidateQueries({ queryKey: ["admin-services"] });
     },
-    onError: () => toast.error("Could not save the service."),
+    onError: () => setFormErrors({ name: "Could not save the service." }),
   });
 
   const archive = useMutation({
@@ -136,25 +139,22 @@ function ServicesAdmin() {
   });
 
   function validateForm() {
+    const nextErrors: Partial<Record<"name" | "category" | "duration" | "price", string>> = {};
     if (form.name.trim().length < 2) {
-      setFormError("Enter a service name with at least 2 characters.");
-      return false;
+      nextErrors.name = "Enter a service name with at least 2 characters.";
     }
     if (form.category.trim().length < 2) {
-      setFormError("Enter a service category with at least 2 characters.");
-      return false;
+      nextErrors.category = "Enter a service category with at least 2 characters.";
     }
     const duration = Number(form.duration_minutes);
     if (!Number.isInteger(duration) || duration < 15 || duration > 480) {
-      setFormError("Enter a service duration from 15 to 480 minutes.");
-      return false;
+      nextErrors.duration = "Enter a service duration from 15 to 480 minutes.";
     }
     if (!editing && !hasValidNewPrice) {
-      setFormError("Enter a valid price of PHP 0 or more.");
-      return false;
+      nextErrors.price = "Enter a valid price of PHP 0 or more.";
     }
-    setFormError("");
-    return true;
+    setFormErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
   }
 
   return (
@@ -168,7 +168,7 @@ function ServicesAdmin() {
             onClick={() => {
               setEditing(null);
               setForm({ ...blank });
-              setFormError("");
+              setFormErrors({});
               setOpen(true);
             }}
           >
@@ -264,7 +264,7 @@ function ServicesAdmin() {
                             duration_minutes: String(s.duration_minutes),
                             is_active: s.is_active,
                           });
-                          setFormError("");
+                          setFormErrors({});
                           setOpen(true);
                         }}
                       >
@@ -295,9 +295,11 @@ function ServicesAdmin() {
                 value={form.name}
                 onChange={(e) => {
                   setForm({ ...form, name: e.target.value });
-                  setFormError("");
+                  setFormErrors((current) => ({ ...current, name: undefined }));
                 }}
+                aria-invalid={!!formErrors.name}
               />
+              <FieldError message={formErrors.name} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="service-category">Category</Label>
@@ -307,10 +309,12 @@ function ServicesAdmin() {
                 value={form.category}
                 onChange={(e) => {
                   setForm({ ...form, category: e.target.value });
-                  setFormError("");
+                  setFormErrors((current) => ({ ...current, category: undefined }));
                 }}
                 placeholder="e.g. maintenance"
+                aria-invalid={!!formErrors.category}
               />
+              <FieldError message={formErrors.category} />
               <datalist id="service-category-options">
                 {distinctCategories.map((category) => (
                   <option key={category} value={category} />
@@ -327,11 +331,13 @@ function ServicesAdmin() {
                 inputMode="numeric"
                 onChange={(e) => {
                   setForm({ ...form, duration_minutes: e.target.value.replace(/\D/g, "") });
-                  setFormError("");
+                  setFormErrors((current) => ({ ...current, duration: undefined }));
                 }}
                 min="15"
                 max="480"
+                aria-invalid={!!formErrors.duration}
               />
+              <FieldError message={formErrors.duration} />
             </div>
             <div className="space-y-1.5">
               <Label>Description</Label>
@@ -359,10 +365,12 @@ function ServicesAdmin() {
                   value={form.price}
                   onChange={(e) => {
                     setForm({ ...form, price: e.target.value });
-                    setFormError("");
+                    setFormErrors((current) => ({ ...current, price: undefined }));
                   }}
                   placeholder="0.00"
+                  aria-invalid={!!formErrors.price}
                 />
+                <FieldError message={formErrors.price} />
               </div>
             )}
             <label className="flex items-center gap-2 text-sm">
@@ -373,7 +381,6 @@ function ServicesAdmin() {
               Show on the public booking form
             </label>
           </div>
-          {formError && <p className="text-xs text-destructive">{formError}</p>}
           <DialogFooter>
             <Button
               onClick={() => {

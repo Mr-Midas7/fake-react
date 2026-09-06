@@ -518,6 +518,72 @@ export type Database = {
         };
         Relationships: [];
       };
+      shop_settings: {
+        Row: {
+          address: string;
+          allow_same_day_appointments: boolean;
+          booking_terms: string;
+          cancellation_notice_hours: number;
+          contact_email: string;
+          contact_number: string;
+          default_appointment_duration_minutes: number;
+          id: boolean;
+          logo_url: string | null;
+          max_advance_booking_days: number;
+          minimum_booking_lead_hours: number;
+          notify_admin: boolean;
+          notify_cancellation: boolean;
+          notify_confirmation: boolean;
+          notify_reminder: boolean;
+          reminder_hours_before: number;
+          rescheduling_notice_hours: number;
+          shop_name: string;
+          updated_at: string;
+        };
+        Insert: {
+          address?: string;
+          allow_same_day_appointments?: boolean;
+          booking_terms?: string;
+          cancellation_notice_hours?: number;
+          contact_email?: string;
+          contact_number?: string;
+          default_appointment_duration_minutes?: number;
+          id?: boolean;
+          logo_url?: string | null;
+          max_advance_booking_days?: number;
+          minimum_booking_lead_hours?: number;
+          notify_admin?: boolean;
+          notify_cancellation?: boolean;
+          notify_confirmation?: boolean;
+          notify_reminder?: boolean;
+          reminder_hours_before?: number;
+          rescheduling_notice_hours?: number;
+          shop_name?: string;
+          updated_at?: string;
+        };
+        Update: {
+          address?: string;
+          allow_same_day_appointments?: boolean;
+          booking_terms?: string;
+          cancellation_notice_hours?: number;
+          contact_email?: string;
+          contact_number?: string;
+          default_appointment_duration_minutes?: number;
+          id?: boolean;
+          logo_url?: string | null;
+          max_advance_booking_days?: number;
+          minimum_booking_lead_hours?: number;
+          notify_admin?: boolean;
+          notify_cancellation?: boolean;
+          notify_confirmation?: boolean;
+          notify_reminder?: boolean;
+          reminder_hours_before?: number;
+          rescheduling_notice_hours?: number;
+          shop_name?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       services: {
         Row: {
           category: string;

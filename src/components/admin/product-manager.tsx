@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { FieldError } from "@/components/ui/field-error";
 import {
   Dialog,
   DialogContent,
@@ -75,7 +76,9 @@ export const ProductManager = forwardRef<
   const [editing, setEditing] = useState<Product | null>(null);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ ...blank });
-  const [formError, setFormError] = useState("");
+  const [formErrors, setFormErrors] = useState<
+    Partial<Record<"name" | "brand" | "price" | "imageUrl" | "imageFile", string | undefined>>
+  >({});
   const [imageSource, setImageSource] = useState<"url" | "local">("url");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
@@ -238,7 +241,7 @@ export const ProductManager = forwardRef<
     },
     onError: (err: Error) => {
       console.error("Save failed:", err);
-      toast.error(`Save failed: ${err.message}`);
+      setFormErrors({ name: `Save failed: ${err.message}` });
     },
   });
 
@@ -267,7 +270,7 @@ export const ProductManager = forwardRef<
     setImageSource("url");
     setUploadedFile(null);
     setUploadPreview(null);
-    setFormError("");
+    setFormErrors({});
     setOpen(true);
   }
 
@@ -286,37 +289,36 @@ export const ProductManager = forwardRef<
     setImageSource(p.image_url ? "url" : "url");
     setUploadedFile(null);
     setUploadPreview(null);
-    setFormError("");
+    setFormErrors({});
     setOpen(true);
   }
 
   function validateForm() {
+    const nextErrors: Partial<
+      Record<"name" | "brand" | "price" | "imageUrl" | "imageFile", string>
+    > = {};
     if (form.name.trim().length < 2) {
-      setFormError("Enter an item name with at least 2 characters.");
-      return false;
+      nextErrors.name = "Enter an item name with at least 2 characters.";
     }
     if (isMotorcycle && !form.brand.trim()) {
-      setFormError("Enter the motorcycle brand.");
-      return false;
+      nextErrors.brand = "Enter the motorcycle brand.";
     }
     if (!isMotorcycle && !editing && !hasValidNewPrice) {
-      setFormError("Enter a valid price of PHP 0 or more.");
-      return false;
+      nextErrors.price = "Enter a valid price of PHP 0 or more.";
     }
     if (imageSource === "url" && form.image_url.trim()) {
       try {
         new URL(form.image_url.trim());
       } catch {
-        setFormError("Enter a valid image URL, including https://, or choose Local Storage.");
-        return false;
+        nextErrors.imageUrl =
+          "Enter a valid image URL, including https://, or choose Local Storage.";
       }
     }
     if (imageSource === "local" && uploadedFile && !uploadedFile.type.startsWith("image/")) {
-      setFormError("Choose a valid image file.");
-      return false;
+      nextErrors.imageFile = "Choose a valid image file.";
     }
-    setFormError("");
-    return true;
+    setFormErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
   }
 
   return (
@@ -439,8 +441,13 @@ export const ProductManager = forwardRef<
               <Label>Model name</Label>
               <Input
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, name: e.target.value });
+                  setFormErrors((current) => ({ ...current, name: undefined }));
+                }}
+                aria-invalid={!!formErrors.name}
               />
+              <FieldError message={formErrors.name} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor={`product-brand-${category}`}>Brand</Label>
@@ -450,10 +457,12 @@ export const ProductManager = forwardRef<
                 value={form.brand}
                 onChange={(e) => {
                   setForm({ ...form, brand: e.target.value });
-                  setFormError("");
+                  setFormErrors((current) => ({ ...current, brand: undefined }));
                 }}
                 placeholder="Select or enter a brand"
+                aria-invalid={!!formErrors.brand}
               />
+              <FieldError message={formErrors.brand} />
               <datalist id={`product-brand-options-${category}`}>
                 {brandOptions.map((brand) => (
                   <option key={brand} value={brand} />
@@ -493,9 +502,14 @@ export const ProductManager = forwardRef<
                     <Label>Image URL</Label>
                     <Input
                       value={form.image_url}
-                      onChange={(e) => setForm({ ...form, image_url: e.target.value })}
+                      onChange={(e) => {
+                        setForm({ ...form, image_url: e.target.value });
+                        setFormErrors((current) => ({ ...current, imageUrl: undefined }));
+                      }}
                       placeholder="https://"
+                      aria-invalid={!!formErrors.imageUrl}
                     />
+                    <FieldError message={formErrors.imageUrl} />
                   </div>
                 )}
                 {imageSource === "local" && (
@@ -507,6 +521,7 @@ export const ProductManager = forwardRef<
                       onChange={(e) => {
                         const file = e.target.files?.[0] ?? null;
                         setUploadedFile(file);
+                        setFormErrors((current) => ({ ...current, imageFile: undefined }));
                         if (file) {
                           const reader = new FileReader();
                           reader.onloadend = () => setUploadPreview(reader.result as string);
@@ -515,7 +530,9 @@ export const ProductManager = forwardRef<
                           setUploadPreview(null);
                         }
                       }}
+                      aria-invalid={!!formErrors.imageFile}
                     />
+                    <FieldError message={formErrors.imageFile} />
                     {uploadPreview && (
                       <img
                         src={uploadPreview}
@@ -536,9 +553,14 @@ export const ProductManager = forwardRef<
                   step="0.01"
                   inputMode="decimal"
                   value={form.price}
-                  onChange={(e) => setForm({ ...form, price: e.target.value })}
+                  onChange={(e) => {
+                    setForm({ ...form, price: e.target.value });
+                    setFormErrors((current) => ({ ...current, price: undefined }));
+                  }}
                   placeholder="0.00"
+                  aria-invalid={!!formErrors.price}
                 />
+                <FieldError message={formErrors.price} />
               </div>
             )}
             {!isMotorcycle && editing && (
@@ -579,7 +601,6 @@ export const ProductManager = forwardRef<
               />
             </div>
           </div>
-          {formError && <p className="text-xs text-destructive">{formError}</p>}
           <DialogFooter>
             <Button
               onClick={() => {

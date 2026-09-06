@@ -87,6 +87,8 @@ const resourceOptions = [
   "Activity Log",
   "Authentication",
   "Reports",
+  "Settings",
+  "Account Settings",
 ];
 
 type ActivityLog = {
@@ -107,7 +109,7 @@ type ActivityLog = {
 type ExportFormat = "pdf" | "docx";
 
 function ActivityLogPage() {
-  const pageSize = 20;
+  const pageSize = 10;
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [user, setUser] = useState("");
@@ -156,7 +158,7 @@ function ActivityLogPage() {
         .from("admin_activity_logs")
         .select("*", { count: "exact" })
         .order("created_at", { ascending: false })
-        .range(hasFilters ? page * pageSize : 0, hasFilters ? page * pageSize + pageSize - 1 : 19);
+        .range(page * pageSize, page * pageSize + pageSize - 1);
 
       if (fromDate) query = query.gte("activity_date", fromDate);
       if (toDate) query = query.lte("activity_date", toDate);
@@ -199,7 +201,7 @@ function ActivityLogPage() {
     ...(toTime ? [{ label: "Before", value: toTime, onClear: () => setToTime("") }] : []),
   ];
   const filterDescription = useMemo(() => {
-    if (!hasFilters) return "Showing the 20 latest records. Apply a filter to view older matches.";
+    if (!hasFilters) return "Showing 10 records per page from the last 50 days.";
     return `Showing page ${page + 1} of ${logs.data?.total ?? 0} matching records from the last 50 days.`;
   }, [hasFilters, logs.data?.total, page]);
 
@@ -627,14 +629,12 @@ function ActivityLogPage() {
               Could not load the activity log. Refresh and try again.
             </p>
           )}
-          {hasFilters && (
-            <PaginationControls
-              page={page}
-              pageSize={pageSize}
-              total={logs.data?.total ?? 0}
-              onPageChange={setPage}
-            />
-          )}
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            total={logs.data?.total ?? 0}
+            onPageChange={setPage}
+          />
         </CardContent>
       </Card>
 

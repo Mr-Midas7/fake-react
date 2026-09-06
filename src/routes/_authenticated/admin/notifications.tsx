@@ -125,14 +125,14 @@ function NotificationsPage() {
                   n.is_read ? "text-muted-foreground" : "text-primary",
                 )}
               />
-              <div className="min-w-48 flex-1">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">{n.title}</p>
                 {n.message && <p className="mt-1 text-sm text-muted-foreground">{n.message}</p>}
                 <p className="mt-1 text-[11px] tracking-wider text-muted-foreground uppercase">
                   {new Date(n.created_at).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
                   variant="outline"

@@ -1,15 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { RotateCcw, Trash2 } from "lucide-react";
-import { useDeferredValue, useEffect, useState } from "react";
+import { format } from "date-fns";
+import { Archive, CalendarRange, RotateCcw, Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { useDeferredValue, useState } from "react";
 import { toast } from "sonner";
 
-import { PageHeader } from "@/components/admin/page-header";
-import { ActiveFilterChips } from "@/components/admin/active-filter-chips";
 import { PaginationControls } from "@/components/admin/pagination-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Calendar } from "@/components/ui/calendar";
+import { FieldError } from "@/components/ui/field-error";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,6 +22,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -38,18 +47,56 @@ export const Route = createFileRoute("/_authenticated/admin/archive")({
   component: ArchivePage,
 });
 
+const ARCHIVE_TABS = [
+  { value: "appointments", label: "Appointments" },
+  { value: "services", label: "Services" },
+  { value: "products", label: "Products" },
+  { value: "motorcycles", label: "Motorcycles" },
+  { value: "crew", label: "Pit Crew" },
+  { value: "blocks", label: "Schedule Blocks" },
+  { value: "blocked-numbers", label: "Blocked Numbers" },
+] as const;
+
+const APPOINTMENT_STATUSES = ["pending", "confirmed", "completed", "cancelled", "no_show"];
+
+type ArchiveFilters = {
+  term: string;
+  dateFrom: string;
+  dateTo: string;
+  status: string;
+};
+
+const EMPTY_FILTERS: ArchiveFilters = {
+  term: "",
+  dateFrom: "",
+  dateTo: "",
+  status: "all",
+};
+
 function ArchivePage() {
-  const pageSize = 25;
+  const pageSize = 10;
   const queryClient = useQueryClient();
-  const [term, setTerm] = useState("");
+  const [draftFilters, setDraftFilters] = useState<ArchiveFilters>(EMPTY_FILTERS);
+  const [filters, setFilters] = useState<ArchiveFilters>(EMPTY_FILTERS);
   const [activeTab, setActiveTab] = useState("appointments");
   const [page, setPage] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; type: string } | null>(null);
-  const deferredTerm = useDeferredValue(term);
+  const [dateRangeOpen, setDateRangeOpen] = useState(false);
+  const deferredTerm = useDeferredValue(filters.term);
   const searchTerm = cleanSearchTerm(deferredTerm);
+  const selectedDateRange = draftFilters.dateFrom
+    ? {
+        from: dateFromIso(draftFilters.dateFrom),
+        to: draftFilters.dateTo ? dateFromIso(draftFilters.dateTo) : undefined,
+      }
+    : undefined;
+  const dateRangeError =
+    draftFilters.dateFrom && draftFilters.dateTo && draftFilters.dateFrom > draftFilters.dateTo
+      ? "The end date must be on or after the start date."
+      : undefined;
 
   const archived = useQuery({
-    queryKey: ["archived-appointments", { searchTerm, page }],
+    queryKey: ["archived-appointments", { searchTerm, filters, page }],
     queryFn: async () => {
       let query = supabase
         .from("appointments")
@@ -60,6 +107,9 @@ function ArchivePage() {
         query = query.or(
           `reference_code.ilike.%${searchTerm}%,customer_name.ilike.%${searchTerm}%,phone.ilike.%${searchTerm}%,plate_number.ilike.%${searchTerm}%`,
         );
+      if (filters.status !== "all") query = query.eq("status", filters.status);
+      if (filters.dateFrom) query = query.gte("appointment_date", filters.dateFrom);
+      if (filters.dateTo) query = query.lte("appointment_date", filters.dateTo);
       const { data, error, count } = await query.range(
         page * pageSize,
         page * pageSize + pageSize - 1,
@@ -67,11 +117,10 @@ function ArchivePage() {
       if (error) throw error;
       return { rows: data ?? [], total: count ?? 0 };
     },
-    enabled: activeTab === "appointments",
   });
 
   const archivedServices = useQuery({
-    queryKey: ["archived-services", { searchTerm, page }],
+    queryKey: ["archived-services", { searchTerm, filters, page }],
     queryFn: async () => {
       let query = supabase
         .from("services")
@@ -79,6 +128,8 @@ function ArchivePage() {
         .eq("is_archived", true)
         .order("sort_order");
       if (searchTerm) query = query.ilike("name", `%${searchTerm}%`);
+      if (filters.dateFrom) query = query.gte("created_at", startOfManilaDay(filters.dateFrom));
+      if (filters.dateTo) query = query.lte("created_at", endOfDay(filters.dateTo));
       const { data, error, count } = await query.range(
         page * pageSize,
         page * pageSize + pageSize - 1,
@@ -86,11 +137,10 @@ function ArchivePage() {
       if (error) throw error;
       return { rows: data ?? [], total: count ?? 0 };
     },
-    enabled: activeTab === "services",
   });
 
   const archivedProducts = useQuery({
-    queryKey: ["archived-products", { searchTerm, page }],
+    queryKey: ["archived-products", { searchTerm, filters, page }],
     queryFn: async () => {
       let query = supabase
         .from("products")
@@ -99,6 +149,8 @@ function ArchivePage() {
         .eq("is_archived", true)
         .order("sort_order");
       if (searchTerm) query = query.or(`name.ilike.%${searchTerm}%,brand.ilike.%${searchTerm}%`);
+      if (filters.dateFrom) query = query.gte("created_at", startOfManilaDay(filters.dateFrom));
+      if (filters.dateTo) query = query.lte("created_at", endOfDay(filters.dateTo));
       const { data, error, count } = await query.range(
         page * pageSize,
         page * pageSize + pageSize - 1,
@@ -106,11 +158,10 @@ function ArchivePage() {
       if (error) throw error;
       return { rows: data ?? [], total: count ?? 0 };
     },
-    enabled: activeTab === "products",
   });
 
   const archivedMotorcycles = useQuery({
-    queryKey: ["archived-motorcycles", { searchTerm, page }],
+    queryKey: ["archived-motorcycles", { searchTerm, filters, page }],
     queryFn: async () => {
       let query = supabase
         .from("products")
@@ -120,6 +171,8 @@ function ArchivePage() {
         .order("brand")
         .order("name");
       if (searchTerm) query = query.or(`name.ilike.%${searchTerm}%,brand.ilike.%${searchTerm}%`);
+      if (filters.dateFrom) query = query.gte("created_at", startOfManilaDay(filters.dateFrom));
+      if (filters.dateTo) query = query.lte("created_at", endOfDay(filters.dateTo));
       const { data, error, count } = await query.range(
         page * pageSize,
         page * pageSize + pageSize - 1,
@@ -127,11 +180,10 @@ function ArchivePage() {
       if (error) throw error;
       return { rows: data ?? [], total: count ?? 0 };
     },
-    enabled: activeTab === "motorcycles",
   });
 
   const archivedCrew = useQuery({
-    queryKey: ["archived-crew", { searchTerm, page }],
+    queryKey: ["archived-crew", { searchTerm, filters, page }],
     queryFn: async () => {
       let query = supabase
         .from("crew_members")
@@ -142,6 +194,8 @@ function ArchivePage() {
         query = query.or(
           `name.ilike.%${searchTerm}%,role.ilike.%${searchTerm}%,phone.ilike.%${searchTerm}%`,
         );
+      if (filters.dateFrom) query = query.gte("created_at", startOfManilaDay(filters.dateFrom));
+      if (filters.dateTo) query = query.lte("created_at", endOfDay(filters.dateTo));
       const { data, error, count } = await query.range(
         page * pageSize,
         page * pageSize + pageSize - 1,
@@ -149,11 +203,10 @@ function ArchivePage() {
       if (error) throw error;
       return { rows: data ?? [], total: count ?? 0 };
     },
-    enabled: activeTab === "crew",
   });
 
   const archivedBlocks = useQuery({
-    queryKey: ["archived-blocks", { searchTerm, page }],
+    queryKey: ["archived-blocks", { searchTerm, filters, page }],
     queryFn: async () => {
       let query = supabase
         .from("schedule_blocks")
@@ -161,6 +214,8 @@ function ArchivePage() {
         .eq("is_active", false)
         .order("block_date", { ascending: false });
       if (searchTerm) query = query.ilike("reason", `%${searchTerm}%`);
+      if (filters.dateFrom) query = query.gte("block_date", filters.dateFrom);
+      if (filters.dateTo) query = query.lte("block_date", filters.dateTo);
       const { data, error, count } = await query.range(
         page * pageSize,
         page * pageSize + pageSize - 1,
@@ -168,11 +223,10 @@ function ArchivePage() {
       if (error) throw error;
       return { rows: data ?? [], total: count ?? 0 };
     },
-    enabled: activeTab === "blocks",
   });
 
   const archivedBlockedNumbers = useQuery({
-    queryKey: ["archived-blocked-numbers", { searchTerm, page }],
+    queryKey: ["archived-blocked-numbers", { searchTerm, filters, page }],
     queryFn: async () => {
       let query = supabase
         .from("blocked_numbers")
@@ -180,6 +234,8 @@ function ArchivePage() {
         .eq("is_archived", true)
         .order("created_at", { ascending: false });
       if (searchTerm) query = query.or(`phone.ilike.%${searchTerm}%,reason.ilike.%${searchTerm}%`);
+      if (filters.dateFrom) query = query.gte("created_at", startOfManilaDay(filters.dateFrom));
+      if (filters.dateTo) query = query.lte("created_at", endOfDay(filters.dateTo));
       const { data, error, count } = await query.range(
         page * pageSize,
         page * pageSize + pageSize - 1,
@@ -187,7 +243,6 @@ function ArchivePage() {
       if (error) throw error;
       return { rows: data ?? [], total: count ?? 0 };
     },
-    enabled: activeTab === "blocked-numbers",
   });
 
   const restoreAppointment = useMutation({
@@ -347,10 +402,6 @@ function ArchivePage() {
     },
   });
 
-  useEffect(() => {
-    setPage(0);
-  }, [activeTab, term]);
-
   const appointmentRows = archived.data?.rows ?? [];
   const serviceRows = archivedServices.data?.rows ?? [];
   const productRows = archivedProducts.data?.rows ?? [];
@@ -358,6 +409,15 @@ function ArchivePage() {
   const crewRows = archivedCrew.data?.rows ?? [];
   const blockRows = archivedBlocks.data?.rows ?? [];
   const blockedNumberRows = archivedBlockedNumbers.data?.rows ?? [];
+  const archiveCounts: Record<string, number> = {
+    appointments: archived.data?.total ?? 0,
+    services: archivedServices.data?.total ?? 0,
+    products: archivedProducts.data?.total ?? 0,
+    motorcycles: archivedMotorcycles.data?.total ?? 0,
+    crew: archivedCrew.data?.total ?? 0,
+    blocks: archivedBlocks.data?.total ?? 0,
+    "blocked-numbers": archivedBlockedNumbers.data?.total ?? 0,
+  };
   const activeArchive = {
     appointments: archived.data,
     services: archivedServices.data,
@@ -378,43 +438,219 @@ function ArchivePage() {
     }
   };
 
+  const applyFilters = () => {
+    if (dateRangeError) return;
+    setFilters({ ...draftFilters });
+    setPage(0);
+  };
+
+  const resetFilters = () => {
+    setDraftFilters(EMPTY_FILTERS);
+    setFilters(EMPTY_FILTERS);
+    setPage(0);
+  };
+
+  const setArchiveType = (value: string) => {
+    if (!ARCHIVE_TABS.some((tab) => tab.value === value)) return;
+    setActiveTab(value);
+    setPage(0);
+  };
+
   return (
     <div>
-      <PageHeader
-        title="Archive"
-        description="Archived bookings, services, products, crew, schedule blocks, and blocked numbers. Restore them or delete permanently."
-      />
-      <Input
-        value={term}
-        onChange={(event) => setTerm(event.target.value)}
-        placeholder="Search the selected archive"
-        className="mb-4 max-w-xs"
-      />
-      <ActiveFilterChips
-        filters={
-          term.trim() ? [{ label: "Search", value: term.trim(), onClear: () => setTerm("") }] : []
-        }
-        onReset={() => {
-          setTerm("");
-          setPage(0);
-        }}
-      />
-
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <div className="overflow-x-auto overflow-y-visible">
-          <TabsList className="mb-4 w-max min-w-full">
-            <TabsTrigger value="appointments">Appointments</TabsTrigger>
-            <TabsTrigger value="services">Services</TabsTrigger>
-            <TabsTrigger value="products">Products</TabsTrigger>
-            <TabsTrigger value="motorcycles">Motorcycles</TabsTrigger>
-            <TabsTrigger value="crew">Pit Crew</TabsTrigger>
-            <TabsTrigger value="blocks">Schedule Blocks</TabsTrigger>
-            <TabsTrigger value="blocked-numbers">Blocked Numbers</TabsTrigger>
-          </TabsList>
+      <header className="mb-6 flex items-start gap-3">
+        <span className="grid size-11 shrink-0 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
+          <Archive className="size-5" aria-hidden="true" />
+        </span>
+        <div>
+          <h1 className="font-display text-2xl tracking-wide uppercase md:text-3xl">Archive</h1>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            Archived bookings, services, products, crew, schedule blocks, and blocked numbers.
+            Restore records or delete them permanently.
+          </p>
         </div>
+      </header>
 
-        <TabsContent value="appointments">
-          <Card className="border-border/70 bg-card/60">
+      <Card className="mb-5 border-border/70 bg-card/60">
+        <CardContent className="p-4 sm:p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <SlidersHorizontal className="size-4 text-primary" aria-hidden="true" />
+            <h2 className="font-display text-base tracking-wide uppercase">Filter archive</h2>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(12rem,1fr)_9rem_13rem_9rem_auto] xl:items-end">
+            <div className="min-w-0 space-y-1.5">
+              <label htmlFor="archive-search" className="text-xs font-medium text-muted-foreground">
+                Search
+              </label>
+              <div className="relative">
+                <Search
+                  className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <Input
+                  id="archive-search"
+                  value={draftFilters.term}
+                  onChange={(event) =>
+                    setDraftFilters((current) => ({ ...current, term: event.target.value }))
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") applyFilters();
+                  }}
+                  placeholder="Search name, customer, or reference"
+                  className="pl-9"
+                />
+              </div>
+            </div>
+
+            <div className="min-w-0 space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Type</label>
+              <Select value={activeTab} onValueChange={setArchiveType}>
+                <SelectTrigger aria-label="Archive record type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ARCHIVE_TABS.map((tab) => (
+                    <SelectItem key={tab.value} value={tab.value}>
+                      {tab.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="min-w-0 space-y-1.5">
+              <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <CalendarRange className="size-3.5" aria-hidden="true" />
+                Date range
+              </label>
+              <Popover open={dateRangeOpen} onOpenChange={setDateRangeOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    aria-invalid={Boolean(dateRangeError)}
+                    aria-label="Select archive date range"
+                    title={formatDateRange(draftFilters.dateFrom, draftFilters.dateTo)}
+                    className="w-full justify-start px-3 text-left font-normal"
+                  >
+                    <CalendarRange className="mr-2 size-4 shrink-0 text-muted-foreground" />
+                    <span
+                      className={cn("truncate", !draftFilters.dateFrom && "text-muted-foreground")}
+                    >
+                      {formatDateRange(draftFilters.dateFrom, draftFilters.dateTo)}
+                    </span>
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  className="w-auto max-w-[calc(100vw-2rem)] overflow-hidden p-0"
+                >
+                  <Calendar
+                    mode="range"
+                    selected={selectedDateRange}
+                    {...(selectedDateRange?.from ? { defaultMonth: selectedDateRange.from } : {})}
+                    numberOfMonths={2}
+                    onSelect={(range) => {
+                      setDraftFilters((current) => ({
+                        ...current,
+                        dateFrom: range?.from ? format(range.from, "yyyy-MM-dd") : "",
+                        dateTo: range?.to ? format(range.to, "yyyy-MM-dd") : "",
+                      }));
+                    }}
+                  />
+                  <div className="flex items-center justify-between gap-3 border-t border-border px-3 py-2">
+                    <span className="min-w-0 truncate text-xs text-muted-foreground">
+                      {draftFilters.dateFrom
+                        ? formatDateRange(draftFilters.dateFrom, draftFilters.dateTo)
+                        : "Choose a start and end date"}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0"
+                      disabled={!draftFilters.dateFrom}
+                      onClick={() =>
+                        setDraftFilters((current) => ({
+                          ...current,
+                          dateFrom: "",
+                          dateTo: "",
+                        }))
+                      }
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+              <FieldError message={dateRangeError} />
+            </div>
+
+            <div className="min-w-0 space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Status</label>
+              <Select
+                value={draftFilters.status}
+                onValueChange={(value) =>
+                  setDraftFilters((current) => ({ ...current, status: value }))
+                }
+                disabled={activeTab !== "appointments"}
+              >
+                <SelectTrigger aria-label="Appointment status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  {APPOINTMENT_STATUSES.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {statusLabel(status)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex gap-2 md:col-span-2 xl:col-span-1 xl:items-end">
+              <Button
+                type="button"
+                className="flex-1 xl:flex-none"
+                onClick={applyFilters}
+                disabled={Boolean(dateRangeError)}
+              >
+                <SlidersHorizontal /> Apply filters
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1 xl:flex-none"
+                onClick={resetFilters}
+              >
+                <RotateCcw /> Reset
+              </Button>
+            </div>
+          </div>
+          {activeTab !== "appointments" && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Status filtering is available for archived appointments.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Tabs value={activeTab} onValueChange={setArchiveType} className="space-y-4">
+        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-2 bg-transparent p-0">
+          {ARCHIVE_TABS.map((tab) => (
+            <TabsTrigger
+              key={tab.value}
+              value={tab.value}
+              className="min-h-9 bg-muted px-3 data-[state=active]:bg-background"
+            >
+              {tab.label} ({archiveCounts[tab.value]})
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        <Card className="border-border/70 bg-card/60">
+          <TabsContent value="appointments" className="mt-0">
             <CardContent className="overflow-x-auto p-0">
               <Table className="admin-data-table">
                 <TableHeader>
@@ -456,21 +692,11 @@ function ArchivePage() {
                       <TableCell data-label="Estimate" className="text-sm">
                         {formatPHP(a.total_estimate)}
                       </TableCell>
-                      <TableCell data-label="Actions" className="flex justify-end gap-2 text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => restoreAppointment.mutate(a.id)}
-                        >
-                          <RotateCcw /> Restore
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => confirmDelete(a.id, "appointment")}
-                        >
-                          <Trash2 /> Delete
-                        </Button>
+                      <TableCell data-label="Actions" className="text-right">
+                        <ArchiveRowActions
+                          onRestore={() => restoreAppointment.mutate(a.id)}
+                          onDelete={() => confirmDelete(a.id, "appointment")}
+                        />
                       </TableCell>
                     </TableRow>
                   ))}
@@ -487,11 +713,9 @@ function ArchivePage() {
                 </TableBody>
               </Table>
             </CardContent>
-          </Card>
-        </TabsContent>
+          </TabsContent>
 
-        <TabsContent value="services">
-          <Card className="border-border/70 bg-card/60">
+          <TabsContent value="services" className="mt-0">
             <CardContent className="overflow-x-auto p-0">
               <Table className="admin-data-table">
                 <TableHeader>
@@ -518,21 +742,11 @@ function ArchivePage() {
                       <TableCell data-label="Description" className="text-xs text-muted-foreground">
                         {s.description ?? "-"}
                       </TableCell>
-                      <TableCell data-label="Actions" className="flex justify-end gap-2 text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => restoreService.mutate(s.id)}
-                        >
-                          <RotateCcw /> Restore
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => confirmDelete(s.id, "service")}
-                        >
-                          <Trash2 /> Delete
-                        </Button>
+                      <TableCell data-label="Actions" className="text-right">
+                        <ArchiveRowActions
+                          onRestore={() => restoreService.mutate(s.id)}
+                          onDelete={() => confirmDelete(s.id, "service")}
+                        />
                       </TableCell>
                     </TableRow>
                   ))}
@@ -551,11 +765,9 @@ function ArchivePage() {
                 </TableBody>
               </Table>
             </CardContent>
-          </Card>
-        </TabsContent>
+          </TabsContent>
 
-        <TabsContent value="products">
-          <Card className="border-border/70 bg-card/60">
+          <TabsContent value="products" className="mt-0">
             <CardContent className="overflow-x-auto p-0">
               <Table className="admin-data-table">
                 <TableHeader>
@@ -585,21 +797,11 @@ function ArchivePage() {
                       <TableCell data-label="Category" className="text-sm capitalize">
                         {p.category}
                       </TableCell>
-                      <TableCell data-label="Actions" className="flex justify-end gap-2 text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => restoreProduct.mutate(p.id)}
-                        >
-                          <RotateCcw /> Restore
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => confirmDelete(p.id, "product")}
-                        >
-                          <Trash2 /> Delete
-                        </Button>
+                      <TableCell data-label="Actions" className="text-right">
+                        <ArchiveRowActions
+                          onRestore={() => restoreProduct.mutate(p.id)}
+                          onDelete={() => confirmDelete(p.id, "product")}
+                        />
                       </TableCell>
                     </TableRow>
                   ))}
@@ -618,11 +820,9 @@ function ArchivePage() {
                 </TableBody>
               </Table>
             </CardContent>
-          </Card>
-        </TabsContent>
+          </TabsContent>
 
-        <TabsContent value="motorcycles">
-          <Card className="border-border/70 bg-card/60">
+          <TabsContent value="motorcycles" className="mt-0">
             <CardContent className="overflow-x-auto p-0">
               <Table className="admin-data-table">
                 <TableHeader>
@@ -641,21 +841,11 @@ function ArchivePage() {
                       <TableCell data-label="Brand" className="text-sm">
                         {p.brand ?? "-"}
                       </TableCell>
-                      <TableCell data-label="Actions" className="flex justify-end gap-2 text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => restoreProduct.mutate(p.id)}
-                        >
-                          <RotateCcw /> Restore
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => confirmDelete(p.id, "product")}
-                        >
-                          <Trash2 /> Delete
-                        </Button>
+                      <TableCell data-label="Actions" className="text-right">
+                        <ArchiveRowActions
+                          onRestore={() => restoreProduct.mutate(p.id)}
+                          onDelete={() => confirmDelete(p.id, "product")}
+                        />
                       </TableCell>
                     </TableRow>
                   ))}
@@ -674,11 +864,9 @@ function ArchivePage() {
                 </TableBody>
               </Table>
             </CardContent>
-          </Card>
-        </TabsContent>
+          </TabsContent>
 
-        <TabsContent value="crew">
-          <Card className="border-border/70 bg-card/60">
+          <TabsContent value="crew" className="mt-0">
             <CardContent className="overflow-x-auto p-0">
               <Table className="admin-data-table">
                 <TableHeader>
@@ -701,21 +889,11 @@ function ArchivePage() {
                       <TableCell data-label="Phone" className="text-sm">
                         {c.phone ?? "-"}
                       </TableCell>
-                      <TableCell data-label="Actions" className="flex justify-end gap-2 text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => restoreCrew.mutate(c.id)}
-                        >
-                          <RotateCcw /> Restore
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => confirmDelete(c.id, "crew")}
-                        >
-                          <Trash2 /> Delete
-                        </Button>
+                      <TableCell data-label="Actions" className="text-right">
+                        <ArchiveRowActions
+                          onRestore={() => restoreCrew.mutate(c.id)}
+                          onDelete={() => confirmDelete(c.id, "crew")}
+                        />
                       </TableCell>
                     </TableRow>
                   ))}
@@ -734,11 +912,9 @@ function ArchivePage() {
                 </TableBody>
               </Table>
             </CardContent>
-          </Card>
-        </TabsContent>
+          </TabsContent>
 
-        <TabsContent value="blocks">
-          <Card className="border-border/70 bg-card/60">
+          <TabsContent value="blocks" className="mt-0">
             <CardContent className="overflow-x-auto p-0">
               <Table className="admin-data-table">
                 <TableHeader>
@@ -761,21 +937,11 @@ function ArchivePage() {
                       <TableCell data-label="Reason" className="text-sm text-muted-foreground">
                         {b.reason ?? "-"}
                       </TableCell>
-                      <TableCell data-label="Actions" className="flex justify-end gap-2 text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => restoreBlock.mutate(b.id)}
-                        >
-                          <RotateCcw /> Restore
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => confirmDelete(b.id, "block")}
-                        >
-                          <Trash2 /> Delete
-                        </Button>
+                      <TableCell data-label="Actions" className="text-right">
+                        <ArchiveRowActions
+                          onRestore={() => restoreBlock.mutate(b.id)}
+                          onDelete={() => confirmDelete(b.id, "block")}
+                        />
                       </TableCell>
                     </TableRow>
                   ))}
@@ -794,11 +960,9 @@ function ArchivePage() {
                 </TableBody>
               </Table>
             </CardContent>
-          </Card>
-        </TabsContent>
+          </TabsContent>
 
-        <TabsContent value="blocked-numbers">
-          <Card className="border-border/70 bg-card/60">
+          <TabsContent value="blocked-numbers" className="mt-0">
             <CardContent className="overflow-x-auto p-0">
               <Table className="admin-data-table">
                 <TableHeader>
@@ -825,21 +989,11 @@ function ArchivePage() {
                           day: "numeric",
                         })}
                       </TableCell>
-                      <TableCell data-label="Actions" className="flex justify-end gap-2 text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => restoreBlockedNumber.mutate(blockedNumber.id)}
-                        >
-                          <RotateCcw /> Restore
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => confirmDelete(blockedNumber.id, "blockedNumber")}
-                        >
-                          <Trash2 /> Delete
-                        </Button>
+                      <TableCell data-label="Actions" className="text-right">
+                        <ArchiveRowActions
+                          onRestore={() => restoreBlockedNumber.mutate(blockedNumber.id)}
+                          onDelete={() => confirmDelete(blockedNumber.id, "blockedNumber")}
+                        />
                       </TableCell>
                     </TableRow>
                   ))}
@@ -858,15 +1012,15 @@ function ArchivePage() {
                 </TableBody>
               </Table>
             </CardContent>
-          </Card>
-        </TabsContent>
+          </TabsContent>
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            total={activeArchive?.total ?? 0}
+            onPageChange={setPage}
+          />
+        </Card>
       </Tabs>
-      <PaginationControls
-        page={page}
-        pageSize={pageSize}
-        total={activeArchive?.total ?? 0}
-        onPageChange={setPage}
-      />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
@@ -896,4 +1050,48 @@ function cleanSearchTerm(value: string) {
     .trim()
     .replace(/[,%_()]/g, " ")
     .replace(/\s+/g, " ");
+}
+
+function dateFromIso(value: string) {
+  return new Date(`${value}T12:00:00`);
+}
+
+function formatDateRange(from: string, to: string) {
+  if (!from) return "Select date range";
+
+  const fromDate = dateFromIso(from);
+  const fromLabel = format(fromDate, "MMM d, yyyy");
+  if (!to) return `${fromLabel} – Select end date`;
+
+  const toDate = dateFromIso(to);
+  return fromDate.getFullYear() === toDate.getFullYear()
+    ? `${format(fromDate, "MMM d")} – ${format(toDate, "MMM d, yyyy")}`
+    : `${fromLabel} – ${format(toDate, "MMM d, yyyy")}`;
+}
+
+function startOfManilaDay(date: string) {
+  return `${date}T00:00:00+08:00`;
+}
+
+function endOfDay(date: string) {
+  return `${date}T23:59:59.999+08:00`;
+}
+
+function ArchiveRowActions({
+  onRestore,
+  onDelete,
+}: {
+  onRestore: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap justify-end gap-2">
+      <Button size="sm" variant="outline" onClick={onRestore}>
+        <RotateCcw /> Restore
+      </Button>
+      <Button size="sm" variant="destructive" onClick={onDelete}>
+        <Trash2 /> Delete
+      </Button>
+    </div>
+  );
 }

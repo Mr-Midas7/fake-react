@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/admin/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -44,6 +45,9 @@ function ScheduleBlocks() {
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const [reason, setReason] = useState("");
+  const [formErrors, setFormErrors] = useState<
+    Partial<Record<"date" | "start" | "end", string | undefined>>
+  >({});
 
   const blocks = useQuery({
     queryKey: ["schedule-blocks"],
@@ -68,22 +72,6 @@ function ScheduleBlocks() {
         });
         if (error) throw error;
       } else if (slot === "custom") {
-        if (!customStart || !customEnd) {
-          toast.error("Please set a start and end time");
-          return;
-        }
-        if (customStart < "08:00") {
-          toast.error("Start time cannot be earlier than 8:00 AM (shop opening).");
-          return;
-        }
-        if (customEnd > "17:00") {
-          toast.error("End time cannot be later than 5:00 PM (shop closing).");
-          return;
-        }
-        if (customStart >= customEnd) {
-          toast.error("End time must be after start time");
-          return;
-        }
         const { error } = await supabase.from("schedule_blocks").insert({
           block_date: date,
           start_time: `${customStart}:00`,
@@ -104,13 +92,17 @@ function ScheduleBlocks() {
     onError: (err: Error) => {
       const msg = err.message.toLowerCase();
       if (msg.includes("unique") || msg.includes("duplicate")) {
-        toast.error("A block for this date already exists. Remove the existing block first.");
+        setFormErrors({
+          date: "A block for this date already exists. Remove the existing block first.",
+        });
       } else if (msg.includes("foreign")) {
-        toast.error("Referenced data no longer exists. Refresh the page and try again.");
+        setFormErrors({
+          date: "Referenced data no longer exists. Refresh the page and try again.",
+        });
       } else {
-        toast.error(
-          `Could not block that schedule. Please check your inputs and try again: ${err.message}`,
-        );
+        setFormErrors({
+          date: `Could not block that schedule. Please check your inputs and try again: ${err.message}`,
+        });
       }
     },
   });
@@ -145,6 +137,26 @@ function ScheduleBlocks() {
     },
   });
 
+  function handleAdd() {
+    const nextErrors: Partial<Record<"date" | "start" | "end", string>> = {};
+    if (!date) nextErrors.date = "Choose the date to block.";
+    if (slot === "custom") {
+      if (!customStart) nextErrors.start = "Please set a start time.";
+      if (!customEnd) nextErrors.end = "Please set an end time.";
+      if (customStart && customStart < "08:00") {
+        nextErrors.start = "Start time cannot be earlier than 8:00 AM (shop opening).";
+      }
+      if (customEnd && customEnd > "17:00") {
+        nextErrors.end = "End time cannot be later than 5:00 PM (shop closing).";
+      }
+      if (customStart && customEnd && customStart >= customEnd) {
+        nextErrors.end = "End time must be after start time.";
+      }
+    }
+    setFormErrors(nextErrors);
+    if (Object.keys(nextErrors).length === 0) add.mutate();
+  }
+
   return (
     <div>
       <PageHeader
@@ -156,7 +168,16 @@ function ScheduleBlocks() {
         <CardContent className="grid gap-4 p-5 sm:grid-cols-4 sm:items-end">
           <div className="space-y-1.5">
             <Label>Date</Label>
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <Input
+              type="date"
+              value={date}
+              onChange={(e) => {
+                setDate(e.target.value);
+                setFormErrors((current) => ({ ...current, date: undefined }));
+              }}
+              aria-invalid={!!formErrors.date}
+            />
+            <FieldError message={formErrors.date} />
           </div>
           <div className="space-y-1.5">
             <Label>Slot</Label>
@@ -182,8 +203,14 @@ function ScheduleBlocks() {
               <div className="grid grid-cols-2 gap-2 space-y-0 space-x-2">
                 <div className="space-y-1.5">
                   <Label>Start</Label>
-                  <Select value={customStart} onValueChange={setCustomStart}>
-                    <SelectTrigger className="w-full">
+                  <Select
+                    value={customStart}
+                    onValueChange={(value) => {
+                      setCustomStart(value);
+                      setFormErrors((current) => ({ ...current, start: undefined }));
+                    }}
+                  >
+                    <SelectTrigger className="w-full" aria-invalid={!!formErrors.start}>
                       <SelectValue placeholder="Start time" />
                     </SelectTrigger>
                     <SelectContent>
@@ -194,11 +221,18 @@ function ScheduleBlocks() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <FieldError message={formErrors.start} />
                 </div>
                 <div className="space-y-1.5">
                   <Label>End</Label>
-                  <Select value={customEnd} onValueChange={setCustomEnd}>
-                    <SelectTrigger className="w-full">
+                  <Select
+                    value={customEnd}
+                    onValueChange={(value) => {
+                      setCustomEnd(value);
+                      setFormErrors((current) => ({ ...current, end: undefined }));
+                    }}
+                  >
+                    <SelectTrigger className="w-full" aria-invalid={!!formErrors.end}>
                       <SelectValue placeholder="End time" />
                     </SelectTrigger>
                     <SelectContent>
@@ -209,6 +243,7 @@ function ScheduleBlocks() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <FieldError message={formErrors.end} />
                 </div>
               </div>
               <p className="text-xs text-muted-foreground">
@@ -225,11 +260,7 @@ function ScheduleBlocks() {
               placeholder="Holiday, team event..."
             />
           </div>
-          <Button
-            onClick={() => add.mutate()}
-            disabled={!date || add.isPending || (slot === "custom" && (!customStart || !customEnd))}
-            className="font-display uppercase"
-          >
+          <Button onClick={handleAdd} disabled={add.isPending} className="font-display uppercase">
             <Plus /> Block
           </Button>
         </CardContent>
@@ -237,7 +268,7 @@ function ScheduleBlocks() {
 
       <Card className="border-border/70 bg-card/60">
         <CardContent className="overflow-x-auto p-0">
-          <Table>
+          <Table className="admin-data-table">
             <TableHeader>
               <TableRow>
                 <TableHead>Date</TableHead>
@@ -251,18 +282,20 @@ function ScheduleBlocks() {
                 const { endTime, userReason } = decodeBlockReason(b.reason);
                 return (
                   <TableRow key={b.id}>
-                    <TableCell className="text-sm">{formatDateLong(b.block_date)}</TableCell>
-                    <TableCell className="text-sm">
+                    <TableCell data-label="Date" className="text-sm">
+                      {formatDateLong(b.block_date)}
+                    </TableCell>
+                    <TableCell data-label="Slot" className="text-sm">
                       {!b.start_time
                         ? "Whole day"
                         : endTime
                           ? `${formatTime(String(b.start_time).slice(0, 5))} – ${formatTime(endTime.slice(0, 5))}`
                           : formatTime(String(b.start_time).slice(0, 5))}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
+                    <TableCell data-label="Reason" className="text-sm text-muted-foreground">
                       {userReason || "-"}
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell data-label="Action" className="text-right">
                       <Button size="sm" variant="ghost" onClick={() => archive.mutate(b.id)}>
                         <Archive className="h-4 w-4" />
                       </Button>

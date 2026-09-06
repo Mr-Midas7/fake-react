@@ -12,11 +12,61 @@ import {
   isBookingStartTime,
   isShopOpenDate,
   isSlotBookable,
+  manilaNow,
   phoneSchema,
   REFERENCE_CODE_PATTERN,
   normalizeReferenceCode,
   timeToMinutes,
 } from "./shop";
+
+type BookingRules = {
+  minimumBookingLeadHours: number;
+  maxAdvanceBookingDays: number;
+  allowSameDayAppointments: boolean;
+  cancellationNoticeHours: number;
+  reschedulingNoticeHours: number;
+};
+
+const defaultBookingRules: BookingRules = {
+  minimumBookingLeadHours: 48,
+  maxAdvanceBookingDays: 30,
+  allowSameDayAppointments: false,
+  cancellationNoticeHours: 48,
+  reschedulingNoticeHours: 48,
+};
+
+async function getBookingRules(): Promise<BookingRules> {
+  try {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data, error } = await supabaseAdmin
+      .from("shop_settings")
+      .select(
+        "minimum_booking_lead_hours,max_advance_booking_days,allow_same_day_appointments,cancellation_notice_hours,rescheduling_notice_hours",
+      )
+      .eq("id", true)
+      .maybeSingle();
+    if (error || !data) {
+      if (error) console.warn("[Booking settings] using defaults", error.message);
+      return defaultBookingRules;
+    }
+    return {
+      minimumBookingLeadHours: data.minimum_booking_lead_hours,
+      maxAdvanceBookingDays: data.max_advance_booking_days,
+      allowSameDayAppointments: data.allow_same_day_appointments,
+      cancellationNoticeHours: data.cancellation_notice_hours,
+      reschedulingNoticeHours: data.rescheduling_notice_hours,
+    };
+  } catch (error) {
+    console.warn("[Booking settings] using defaults", error);
+    return defaultBookingRules;
+  }
+}
+
+function firstBookableDate(rules: BookingRules) {
+  let date = earliestBookableDate(rules.minimumBookingLeadHours);
+  if (!rules.allowSameDayAppointments && date === manilaNow().date) date = addDays(date, 1);
+  return date;
+}
 
 const currentYear = new Date().getFullYear();
 
@@ -182,12 +232,18 @@ export const getAvailability = createServerFn({ method: "GET" })
       );
     }
     const { supabaseAdmin } = supabaseModule;
+    const bookingRules = await getBookingRules();
+    const configuredFrom = firstBookableDate(bookingRules);
+    const configuredTo = addDays(
+      manilaNow().date,
+      Math.max(0, Math.min(data.days, bookingRules.maxAdvanceBookingDays)),
+    );
 
     const availabilityRateLimit = await checkPublicRequestRateLimit("availability", 60, 60);
     if (availabilityRateLimit === "limited") {
       return unavailableAvailability(
-        from,
-        to,
+        configuredFrom,
+        configuredTo,
         "Too many availability checks. Please try again shortly.",
       );
     }
@@ -210,14 +266,14 @@ export const getAvailability = createServerFn({ method: "GET" })
           .from("schedule_blocks")
           .select("block_date,start_time,reason")
           .eq("is_active", true)
-          .gte("block_date", from)
-          .lte("block_date", to),
+          .gte("block_date", configuredFrom)
+          .lte("block_date", configuredTo),
         supabaseAdmin
           .from("appointments")
           .select("appointment_date,start_time,assigned_crew_id,booking_duration_minutes")
           .eq("is_archived", false)
-          .gte("appointment_date", from)
-          .lte("appointment_date", to)
+          .gte("appointment_date", configuredFrom)
+          .lte("appointment_date", configuredTo)
           .not("status", "in", "(cancelled,no_show)"),
         data.serviceIds.length > 0
           ? supabaseAdmin
@@ -230,8 +286,8 @@ export const getAvailability = createServerFn({ method: "GET" })
         supabaseAdmin
           .from("crew_schedules")
           .select("*")
-          .gte("schedule_date", from)
-          .lte("schedule_date", to),
+          .gte("schedule_date", configuredFrom)
+          .lte("schedule_date", configuredTo),
         supabaseAdmin
           .from("crew_members")
           .select("id")
@@ -240,8 +296,8 @@ export const getAvailability = createServerFn({ method: "GET" })
         supabaseAdmin
           .from("crew_availability_exceptions")
           .select("*")
-          .gte("end_date", from)
-          .lte("start_date", to),
+          .gte("end_date", configuredFrom)
+          .lte("start_date", configuredTo),
       ]);
 
     if (
@@ -263,7 +319,11 @@ export const getAvailability = createServerFn({ method: "GET" })
         exceptionsRes.error,
       ];
       console.error("[Booking availability] database query failed", errors);
-      return unavailableAvailability(from, to, availabilityErrorMessage(errors));
+      return unavailableAvailability(
+        configuredFrom,
+        configuredTo,
+        availabilityErrorMessage(errors),
+      );
     }
 
     if (
@@ -271,8 +331,8 @@ export const getAvailability = createServerFn({ method: "GET" })
       (servicesRes.data?.length ?? 0) !== new Set(data.serviceIds).size
     ) {
       return unavailableAvailability(
-        from,
-        to,
+        configuredFrom,
+        configuredTo,
         "One or more selected services are no longer available. Please choose a different service.",
       );
     }
@@ -305,8 +365,9 @@ export const getAvailability = createServerFn({ method: "GET" })
     }));
 
     return buildPublicAvailability({
-      from,
-      to,
+      from: configuredFrom,
+      to: configuredTo,
+      minimumBookingLeadHours: bookingRules.minimumBookingLeadHours,
       totalDurationMinutes: totalDuration || 90,
       slots: buildBookingTimeSlots(capacityConfig),
       blocks: (blocksRes.data ?? []).map((b) => {
@@ -330,6 +391,7 @@ export const createBooking = createServerFn({ method: "POST" })
   .validator((input: unknown) => bookingSchema.parse(input))
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const bookingRules = await getBookingRules();
 
     // A retry after a lost response must return the original reservation instead
     // of consuming another slot or requiring a previously used challenge token.
@@ -401,6 +463,24 @@ export const createBooking = createServerFn({ method: "POST" })
       };
     }
 
+    const firstAvailableDate = firstBookableDate(bookingRules);
+    const lastAvailableDate = addDays(manilaNow().date, bookingRules.maxAdvanceBookingDays);
+    if (
+      data.date < firstAvailableDate ||
+      !isSlotBookable(data.date, startTime, bookingRules.minimumBookingLeadHours)
+    ) {
+      return {
+        ok: false as const,
+        error: "This slot is no longer bookable. Please select a later time.",
+      };
+    }
+    if (data.date > lastAvailableDate) {
+      return {
+        ok: false as const,
+        error: `Bookings can be made up to ${bookingRules.maxAdvanceBookingDays} days in advance.`,
+      };
+    }
+
     const slotConfigRes = await supabaseAdmin
       .from("time_slots")
       .select("start_time,capacity")
@@ -416,13 +496,6 @@ export const createBooking = createServerFn({ method: "POST" })
     ).find((configuredSlot) => configuredSlot.startTime === startTime);
     if (!slot || slot.capacity <= 0)
       return { ok: false as const, error: "That time slot is not available." };
-
-    if (!isSlotBookable(data.date, startTime)) {
-      return {
-        ok: false as const,
-        error: "This slot is no longer bookable. Please select a later time.",
-      };
-    }
 
     // --- Fetch services to calculate the service duration and two booking buffers ---
     const services = await supabaseAdmin
@@ -770,10 +843,17 @@ export const cancelAppointment = createServerFn({ method: "POST" })
         error: "This appointment can no longer be cancelled online. Please call the shop.",
       };
     }
-    if (!isSlotBookable(appt.appointment_date, String(appt.start_time).slice(0, 5))) {
+    const bookingRules = await getBookingRules();
+    if (
+      !isSlotBookable(
+        appt.appointment_date,
+        String(appt.start_time).slice(0, 5),
+        bookingRules.cancellationNoticeHours,
+      )
+    ) {
       return {
         ok: false as const,
-        error: "Cancellations need 48 hours notice. Please call the shop instead.",
+        error: `Cancellations need ${bookingRules.cancellationNoticeHours} hours notice. Please call the shop instead.`,
       };
     }
 

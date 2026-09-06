@@ -49,7 +49,7 @@ export const Route = createFileRoute("/_authenticated/admin/appointments")({
 });
 
 function AppointmentsPage() {
-  const pageSize = 25;
+  const pageSize = 10;
   const qc = useQueryClient();
   const navigate = useNavigate();
   const search = Route.useSearch();

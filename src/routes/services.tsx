@@ -66,20 +66,20 @@ function ServicesPage() {
         </p>
 
         <div className="mt-8">
-          <div className="mb-4 overflow-x-auto">
+          <div className="mb-4">
             <ToggleGroup
               type="single"
               variant="outline"
               value={activeCategory}
               onValueChange={setActiveCategory}
-              className="flex w-max min-w-full shrink-0 justify-start gap-1.5"
+              className="flex w-full flex-wrap justify-start gap-1.5"
             >
               {categories.map((cat) => {
                 const count = services.data?.filter(
                   (s) => cat === "all" || s.category === cat,
                 ).length;
                 return (
-                  <ToggleGroupItem key={cat} value={cat} className="shrink-0 capitalize">
+                  <ToggleGroupItem key={cat} value={cat} className="capitalize">
                     {cat === "all" ? "All" : cat}
                     <Badge
                       variant={activeCategory === cat ? "default" : "secondary"}

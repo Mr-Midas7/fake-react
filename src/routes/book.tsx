@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -34,6 +35,7 @@ import {
 } from "@/lib/availability";
 import { createBooking, getAvailability } from "@/lib/booking.functions";
 import {
+  DEFAULT_BOOKING_TERMS,
   PHONE_VALIDATION_MESSAGE,
   SHOP,
   formatDateLong,
@@ -143,6 +145,19 @@ function BookPage() {
     },
   });
 
+  const shopSettings = useQuery({
+    queryKey: ["public-shop-settings"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("shop_settings")
+        .select("booking_terms")
+        .eq("id", true)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+
   const motorcycleCatalog = useQuery({
     queryKey: ["motorcycle-catalog"],
     queryFn: async () => {
@@ -225,6 +240,7 @@ function BookPage() {
     (sum, service) => sum + (service.duration_minutes ?? 60),
     selectedServices.length > 0 ? 30 : 0,
   );
+  const bookingTerms = shopSettings.data?.booking_terms || DEFAULT_BOOKING_TERMS;
 
   useEffect(() => {
     if (!availability.data || !date) return;
@@ -268,7 +284,7 @@ function BookPage() {
     },
     onSuccess: (res) => {
       if (!res.ok) {
-        toast.error(res.error);
+        setErrors((current) => ({ ...current, schedule: res.error }));
         setTurnstileToken("");
         setBookingRequestId(crypto.randomUUID());
         availability.refetch();
@@ -279,15 +295,17 @@ function BookPage() {
     },
     onError: (err: Error) => {
       const msg = err.message.toLowerCase();
+      let scheduleError: string;
       if (msg.includes("network") || msg.includes("fetch") || msg.includes("connect")) {
-        toast.error("Network error. Please check your connection and try again.");
+        scheduleError = "Network error. Please check your connection and try again.";
       } else if (msg.includes("timeout")) {
-        toast.error("The request timed out. Please try again.");
+        scheduleError = "The request timed out. Please try again.";
       } else if (msg.includes("validation") || msg.includes("invalid")) {
-        toast.error("Some fields have invalid values. Please review the form.");
+        scheduleError = "Some fields have invalid values. Please review the form.";
       } else {
-        toast.error(`Booking failed: ${err.message}. Please review your details and try again.`);
+        scheduleError = `Booking failed: ${err.message}. Please review your details and try again.`;
       }
+      setErrors((current) => ({ ...current, schedule: scheduleError }));
       availability.refetch();
     },
   });
@@ -324,7 +342,6 @@ function BookPage() {
     const e = validationErrors([mobileStep]);
     setErrors(e);
     if (Object.keys(e).length > 0) {
-      toast.error("Please complete the highlighted fields.");
       return;
     }
     setMobileStep((step) => Math.min(step + 1, 6));
@@ -339,7 +356,6 @@ function BookPage() {
 
   function submitBooking() {
     if (validate()) mutation.mutate();
-    else toast.error("Please complete the highlighted fields.");
   }
 
   if (result) {
@@ -632,7 +648,12 @@ function BookPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-3 md:grid-cols-2">
+            <div
+              className={cn(
+                "grid gap-3 rounded-lg md:grid-cols-2",
+                errors.services && "ring-1 ring-destructive",
+              )}
+            >
               {filteredServices.map((s) => {
                 const checked = serviceIds.includes(s.id);
                 return (
@@ -713,7 +734,12 @@ function BookPage() {
                   for your selected services. Other dates cannot be selected.
                 </p>
 
-                <div className="w-full overflow-x-auto rounded-lg border border-border bg-card/50 p-2">
+                <div
+                  className={cn(
+                    "w-full overflow-x-auto rounded-lg border border-border bg-card/50 p-2",
+                    errors.schedule && "border-destructive",
+                  )}
+                >
                   <Calendar
                     mode="single"
                     selected={selectedDate}
@@ -752,7 +778,12 @@ function BookPage() {
                       : "Choose a date above to view available time slots."}
                   </p>
                   {date ? (
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div
+                      className={cn(
+                        "grid grid-cols-2 gap-3 sm:grid-cols-4",
+                        errors.schedule && "rounded-lg ring-1 ring-destructive",
+                      )}
+                    >
                       {slots.map((slot) => (
                         <button
                           type="button"
@@ -800,28 +831,14 @@ function BookPage() {
               <p className="font-display tracking-wide text-foreground uppercase">
                 Terms and conditions
               </p>
-              <ul className="mt-2 list-disc space-y-1 pl-5">
-                <li>Bookings are subject to shop confirmation.</li>
-                <li>
-                  Please arrive 15 minutes before your slot. Late arrivals beyond 30 minutes may be
-                  rescheduled.
-                </li>
-                <li>
-                  Quoted prices are starting rates; parts and additional labor are billed
-                  separately.
-                </li>
-                <li>
-                  Cancellations must be made at least {SHOP.noticeHours} hours before the schedule.
-                </li>
-                <li>The shop is not liable for personal items left on the unit.</li>
-                <li>
-                  We use your name, contact details, motorcycle details, selected services, and
-                  notes only to manage this booking, contact you about it, and provide shop
-                  services. We do not sell your information.
-                </li>
-              </ul>
+              <p className="mt-2 whitespace-pre-line">{bookingTerms}</p>
             </div>
-            <label className="mt-4 flex items-start gap-3 text-sm">
+            <label
+              className={cn(
+                "mt-4 flex items-start gap-3 text-sm",
+                errors.terms && "rounded-md border border-destructive p-3",
+              )}
+            >
               <Checkbox
                 checked={terms}
                 onCheckedChange={(v) => setTerms(v === true)}
@@ -905,7 +922,7 @@ function Section({
     <section className={cn("rounded-xl border border-border/70 bg-card/40 p-6", className)}>
       <h2 className="font-display mb-4 text-xl tracking-wide uppercase">{title}</h2>
       {children}
-      {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+      <FieldError message={error} className="mt-3" />
     </section>
   );
 }
@@ -937,10 +954,13 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-1.5">
+    <div
+      data-invalid={!!error}
+      className="space-y-1.5 data-[invalid=true]:[&_[role=combobox]]:border-destructive data-[invalid=true]:[&_input]:border-destructive data-[invalid=true]:[&_textarea]:border-destructive"
+    >
       <Label>{label}</Label>
       {children}
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      <FieldError message={error} />
     </div>
   );
 }

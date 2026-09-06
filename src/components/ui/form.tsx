@@ -1,6 +1,7 @@
 import * as React from "react";
 import * as LabelPrimitive from "@radix-ui/react-label";
 import { Slot } from "@radix-ui/react-slot";
+import { CircleAlert } from "lucide-react";
 import {
   Controller,
   FormProvider,
@@ -150,9 +151,13 @@ const FormMessage = React.forwardRef<
     <p
       ref={ref}
       id={formMessageId}
-      className={cn("text-[0.8rem] font-medium text-destructive", className)}
+      className={cn(
+        "flex items-center gap-1 text-[0.8rem] font-medium text-destructive",
+        className,
+      )}
       {...props}
     >
+      <CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
       {body}
     </p>
   );
