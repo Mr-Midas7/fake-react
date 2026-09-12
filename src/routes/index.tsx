@@ -11,9 +11,7 @@ import {
 } from "lucide-react";
 
 import famImage from "@/assets/fam-image.jpg?url";
-import logo from "@/assets/logo-shp.png.asset.json";
 import { ProductCard } from "@/components/site/product-card";
-import { QuickSchedule } from "@/components/site/quick-schedule";
 import { SiteFooter } from "@/components/site/site-footer";
 import { SiteHeader } from "@/components/site/site-header";
 import { Badge } from "@/components/ui/badge";
@@ -80,17 +78,34 @@ function Home() {
       <SiteHeader />
 
       <main>
-        <section className="relative overflow-hidden">
-          <div className="site-container grid items-center gap-10 py-16 md:grid-cols-2 md:py-24">
-            <div>
-              <Badge className="mb-4 bg-accent/15 text-accent uppercase" variant="outline">
+        <section className="relative isolate overflow-hidden border-y border-border/50 bg-card">
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 bg-cover bg-center"
+            style={{ backgroundImage: "url('/fake-rider-shop.jpg')" }}
+          />
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/75 to-black/25"
+          />
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/10"
+          />
+
+          <div className="site-container relative z-10 py-20 md:py-28">
+            <div className="max-w-2xl">
+              <Badge
+                className="mb-4 border-white/30 bg-black/25 text-accent uppercase"
+                variant="outline"
+              >
                 Local Pit Stop &middot; Philippines
               </Badge>
-              <h1 className="font-display text-5xl leading-[0.95] font-extrabold uppercase md:text-7xl">
+              <h1 className="font-display text-5xl leading-[0.95] font-extrabold text-white uppercase md:text-7xl">
                 Ride Hard.
                 <span className="text-gradient-race block">Service Harder.</span>
               </h1>
-              <p className="mt-5 max-w-lg text-base text-muted-foreground">
+              <p className="mt-5 max-w-lg text-base text-white/85">
                 {SHOP.tagline}. Reserve your slot online, get a reference code instantly, and let
                 our pit crew take care of the rest.
               </p>
@@ -109,7 +124,7 @@ function Home() {
                   <Link to="/my-appointment">Track my booking</Link>
                 </Button>
               </div>
-              <div className="mt-8 grid gap-3 text-sm text-muted-foreground sm:grid-cols-3">
+              <div className="mt-8 grid gap-3 text-sm text-white/85 sm:grid-cols-3">
                 <span className="flex items-center gap-2">
                   <ShieldCheck className="h-4 w-4 text-primary" /> Certified mechanics
                 </span>
@@ -121,19 +136,11 @@ function Home() {
                 </span>
               </div>
             </div>
-            <div className="relative">
-              <div className="absolute inset-0 -z-10 rounded-full bg-primary/10 blur-3xl" />
-              <img
-                src={logo.url}
-                alt="Fake Rider Motorparts official logo"
-                className="mx-auto w-full max-w-lg drop-shadow-2xl"
-              />
-            </div>
           </div>
         </section>
 
         <section className="border-y border-border/70 bg-card/40">
-          <div className="site-container grid gap-4 py-8 sm:grid-cols-3">
+          <div className="site-container grid gap-4 py-6 md:py-7 sm:grid-cols-3">
             <InfoTile
               icon={<MapPin className="h-5 w-5 text-primary" />}
               title="Shop location"
@@ -153,7 +160,7 @@ function Home() {
           </div>
         </section>
 
-        <section className="site-container py-16">
+        <section className="site-container py-8 md:py-10">
           <SectionHeading
             eyebrow="Shop showcase"
             title="Featured parts & accessories"
@@ -178,7 +185,7 @@ function Home() {
         </section>
 
         <section className="border-y border-border/70 bg-card/30">
-          <div className="site-container py-16">
+          <div className="site-container py-8 md:py-10">
             <SectionHeading
               eyebrow="Service menu"
               title="What our pit crew can do"
@@ -209,9 +216,7 @@ function Home() {
           </div>
         </section>
 
-        <QuickSchedule />
-
-        <section className="site-container grid items-center gap-10 py-16 md:grid-cols-2">
+        <section className="site-container grid items-center gap-10 pt-8 pb-4 md:grid-cols-2 md:pt-10 md:pb-6">
           <img
             src={famImage}
             alt="The Fake Rider Motorparts riding family at a local motocross event"
@@ -229,7 +234,25 @@ function Home() {
               give our own race bikes.
             </p>
             <p className="mt-4 text-muted-foreground">
+              We welcome everyday commuters, long-distance riders, and weekend enthusiasts who
+              simply want a shop they can trust. Our crew listens to what your motorcycle needs,
+              explains the work in clear terms, and helps you choose the right service or part for
+              the road ahead.
+            </p>
+            <p className="mt-4 text-muted-foreground">
+              From quick oil changes and brake checks to repairs, upgrades, and riding essentials,
+              we work carefully and honestly on every unit that comes through our doors. The goal is
+              simple: keep your ride reliable, safe, and ready for the next trip with the people who
+              matter to you.
+            </p>
+            <p className="mt-4 text-muted-foreground">
+              Our shop is also a place to swap stories, ask questions, and meet people who share the
+              same love for two wheels. Whether you are preparing for a local ride, restoring a
+              trusted bike, or maintaining your daily motorcycle, you are always welcome here.
+            </p>
+            <p className="mt-4 text-muted-foreground">
               Drop by, join a ride, or reserve your service slot online and skip the waiting line.
+              Fake Rider Motorparts is ready to help you enjoy every kilometre with confidence.
             </p>
             <Button asChild className="mt-6 font-display tracking-wide uppercase">
               <Link to="/book">Reserve your slot</Link>
@@ -238,7 +261,7 @@ function Home() {
         </section>
       </main>
 
-      <SiteFooter />
+      <SiteFooter className="mt-4 md:mt-6" />
     </div>
   );
 }

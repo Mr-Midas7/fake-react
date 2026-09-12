@@ -8,6 +8,8 @@ import {
   buildBookingTimeSlots,
   decodeBlockReason,
   earliestBookableDate,
+  formatDateLong,
+  formatTime,
   intervalsOverlap,
   isBookingStartTime,
   isShopOpenDate,
@@ -77,10 +79,23 @@ const availabilitySchema = z.object({
     .max(6)
     .refine((ids) => new Set(ids).size === ids.length, "Services must be unique")
     .default([]),
+  // Administrators editing an appointment need to see the current slot as
+  // available while still applying the exact same booking rules to every
+  // other appointment.
+  excludeAppointmentId: z.string().uuid().optional(),
+  rescheduling: z.boolean().default(false),
 });
 
+const namePartSchema = z
+  .string()
+  .trim()
+  .max(40)
+  .regex(/^(?:[A-Za-z]+(?: [A-Za-z]+)*)?$/, "Names may contain letters and spaces only.");
+
 const bookingSchema = z.object({
-  customerName: z.string().trim().min(2).max(80),
+  firstName: namePartSchema.default(""),
+  middleName: namePartSchema.default(""),
+  lastName: namePartSchema.default(""),
   phone: phoneSchema,
   email: z.string().trim().email().max(120).optional().or(z.literal("")),
   motoBrand: z.string().trim().min(1).max(50),
@@ -99,9 +114,19 @@ const bookingSchema = z.object({
   turnstileToken: z.string().trim().max(2048).default(""),
   idempotencyKey: z.string().uuid(),
   termsAccepted: z.literal(true),
+  rescheduleReference: z
+    .string()
+    .trim()
+    .regex(REFERENCE_CODE_PATTERN, "Enter a valid original appointment reference.")
+    .optional(),
+  rescheduleReason: z.string().trim().max(500).optional().or(z.literal("")),
 });
 
 export type BookingInput = z.infer<typeof bookingSchema>;
+
+function fullName(firstName: string, middleName: string, lastName: string) {
+  return [firstName.trim(), middleName.trim(), lastName.trim()].filter(Boolean).join(" ");
+}
 
 function unavailableAvailability(from: string, to: string, error: string) {
   return {
@@ -159,7 +184,7 @@ async function hashRateLimitSubject(subject: string) {
 type RateLimitResult = "allowed" | "limited" | "unavailable";
 
 async function checkPublicRequestRateLimit(
-  scope: "availability" | "booking" | "lookup" | "cancellation",
+  scope: "availability" | "booking" | "lookup" | "cancellation" | "rescheduling",
   maxRequests: number,
   windowSeconds: number,
   subject?: string,
@@ -233,7 +258,12 @@ export const getAvailability = createServerFn({ method: "GET" })
     }
     const { supabaseAdmin } = supabaseModule;
     const bookingRules = await getBookingRules();
-    const configuredFrom = firstBookableDate(bookingRules);
+    let configuredFrom = data.rescheduling
+      ? earliestBookableDate(bookingRules.reschedulingNoticeHours)
+      : firstBookableDate(bookingRules);
+    if (!bookingRules.allowSameDayAppointments && configuredFrom === manilaNow().date) {
+      configuredFrom = addDays(configuredFrom, 1);
+    }
     const configuredTo = addDays(
       manilaNow().date,
       Math.max(0, Math.min(data.days, bookingRules.maxAdvanceBookingDays)),
@@ -255,6 +285,18 @@ export const getAvailability = createServerFn({ method: "GET" })
       );
     }
 
+    let appointmentsQuery = supabaseAdmin
+      .from("appointments")
+      .select("appointment_date,start_time,assigned_crew_id,booking_duration_minutes")
+      .eq("is_archived", false)
+      .gte("appointment_date", configuredFrom)
+      .lte("appointment_date", configuredTo)
+      .is("rescheduled_to_appointment_id", null)
+      .not("status", "in", "(cancelled,rejected,no_show)");
+    if (data.excludeAppointmentId) {
+      appointmentsQuery = appointmentsQuery.neq("id", data.excludeAppointmentId);
+    }
+
     const [slotsRes, blocksRes, apptsRes, servicesRes, schedulesRes, activeCrewRes, exceptionsRes] =
       await Promise.all([
         supabaseAdmin
@@ -268,13 +310,7 @@ export const getAvailability = createServerFn({ method: "GET" })
           .eq("is_active", true)
           .gte("block_date", configuredFrom)
           .lte("block_date", configuredTo),
-        supabaseAdmin
-          .from("appointments")
-          .select("appointment_date,start_time,assigned_crew_id,booking_duration_minutes")
-          .eq("is_archived", false)
-          .gte("appointment_date", configuredFrom)
-          .lte("appointment_date", configuredTo)
-          .not("status", "in", "(cancelled,no_show)"),
+        appointmentsQuery,
         data.serviceIds.length > 0
           ? supabaseAdmin
               .from("services")
@@ -367,7 +403,9 @@ export const getAvailability = createServerFn({ method: "GET" })
     return buildPublicAvailability({
       from: configuredFrom,
       to: configuredTo,
-      minimumBookingLeadHours: bookingRules.minimumBookingLeadHours,
+      minimumBookingLeadHours: data.rescheduling
+        ? bookingRules.reschedulingNoticeHours
+        : bookingRules.minimumBookingLeadHours,
       totalDurationMinutes: totalDuration || 90,
       slots: buildBookingTimeSlots(capacityConfig),
       blocks: (blocksRes.data ?? []).map((b) => {
@@ -392,6 +430,17 @@ export const createBooking = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const bookingRules = await getBookingRules();
+    const customerName = fullName(data.firstName, data.middleName, data.lastName);
+
+    if (!data.rescheduleReference && !data.firstName.trim()) {
+      return { ok: false as const, error: "Enter the customer's first name." };
+    }
+    if (!data.rescheduleReference && !data.middleName.trim()) {
+      return { ok: false as const, error: "Enter the customer's middle name." };
+    }
+    if (!data.rescheduleReference && !data.lastName.trim()) {
+      return { ok: false as const, error: "Enter the customer's last name." };
+    }
 
     // A retry after a lost response must return the original reservation instead
     // of consuming another slot or requiring a previously used challenge token.
@@ -411,6 +460,99 @@ export const createBooking = createServerFn({ method: "POST" })
         ok: true as const,
         reference: existingRequest.data.reference_code,
         total: Number(existingRequest.data.total_estimate),
+      };
+    }
+
+    let rescheduledFrom: { id: string; reference_code: string; total_estimate: number } | null =
+      null;
+    if (data.rescheduleReference) {
+      const original = await findAppointment(data.rescheduleReference, data.phone);
+      if (!original) {
+        return {
+          ok: false as const,
+          error: "We could not verify the original appointment. Please look it up again.",
+        };
+      }
+      if (original.rescheduled_to_appointment_id) {
+        return {
+          ok: false as const,
+          error: "This appointment has already been rescheduled.",
+        };
+      }
+      if (original.reschedule_count >= 3) {
+        return {
+          ok: false as const,
+          error: "This appointment has reached the maximum of 3 reschedules.",
+        };
+      }
+      if (!["pending", "confirmed"].includes(original.status)) {
+        return {
+          ok: false as const,
+          error: "This appointment can no longer be rescheduled online. Please call the shop.",
+        };
+      }
+      if (original.pending_reschedule_request_id) {
+        if (original.pending_reschedule_request_id === data.idempotencyKey) {
+          return {
+            ok: true as const,
+            reference: original.reference_code,
+            total: Number(original.total_estimate),
+            rescheduleRequested: true as const,
+          };
+        }
+        return {
+          ok: false as const,
+          error: "A reschedule request for this appointment is already awaiting review.",
+        };
+      }
+      if (
+        !isSlotBookable(
+          original.appointment_date,
+          String(original.start_time).slice(0, 5),
+          bookingRules.reschedulingNoticeHours,
+        )
+      ) {
+        return {
+          ok: false as const,
+          error: `Rescheduling needs ${bookingRules.reschedulingNoticeHours} hours notice. Please call the shop instead.`,
+        };
+      }
+      if (data.date === original.appointment_date) {
+        return {
+          ok: false as const,
+          error: "Choose a date different from your current appointment date.",
+        };
+      }
+
+      const originalServices = (original.appointment_services ?? []).flatMap((service) =>
+        service.service_id ? [service.service_id] : [],
+      );
+      if (originalServices.length === 0) {
+        return {
+          ok: false as const,
+          error:
+            "The original services are unavailable for online rescheduling. Please call the shop.",
+        };
+      }
+
+      // Personal, motorcycle, and service data always comes from the original
+      // server-side record. Client-supplied copies cannot be used to alter it.
+      data = {
+        ...data,
+        phone: original.phone,
+        email: original.email ?? "",
+        motoBrand: original.moto_brand,
+        motoModel: original.moto_model,
+        motoVariant: original.moto_variant ?? "",
+        motoYear: original.moto_year ?? new Date().getFullYear(),
+        plateNumber: original.plate_number,
+        serviceIds: originalServices,
+        notes: original.notes ?? "",
+      };
+      rescheduledFrom = {
+        id: original.id,
+        reference_code: original.reference_code,
+        total_estimate: Number(original.total_estimate),
       };
     }
 
@@ -467,7 +609,13 @@ export const createBooking = createServerFn({ method: "POST" })
     const lastAvailableDate = addDays(manilaNow().date, bookingRules.maxAdvanceBookingDays);
     if (
       data.date < firstAvailableDate ||
-      !isSlotBookable(data.date, startTime, bookingRules.minimumBookingLeadHours)
+      !isSlotBookable(
+        data.date,
+        startTime,
+        rescheduledFrom
+          ? bookingRules.reschedulingNoticeHours
+          : bookingRules.minimumBookingLeadHours,
+      )
     ) {
       return {
         ok: false as const,
@@ -510,6 +658,42 @@ export const createBooking = createServerFn({ method: "POST" })
       services.data.length !== data.serviceIds.length
     ) {
       return { ok: false as const, error: "Please select available services and try again." };
+    }
+
+    // A customer may only hold one active booking for a service on a given date.
+    // The database trigger below remains the source of truth for concurrent requests;
+    // this check gives the customer an actionable response before we reserve capacity.
+    const duplicateServiceBookingQuery = supabaseAdmin
+      .from("appointments")
+      .select("appointment_date,start_time,appointment_services!inner(service_id,service_name)")
+      .eq("phone", data.phone)
+      .eq("appointment_date", data.date)
+      .eq("is_archived", false)
+      .is("rescheduled_to_appointment_id", null)
+      .not("status", "in", "(completed,cancelled,rejected)")
+      .in("appointment_services.service_id", data.serviceIds);
+    const duplicateServiceBooking = rescheduledFrom
+      ? await duplicateServiceBookingQuery.neq("id", rescheduledFrom.id).limit(1)
+      : await duplicateServiceBookingQuery.limit(1);
+
+    if (duplicateServiceBooking.error) {
+      console.error("[Booking] duplicate service booking check failed", {
+        code: duplicateServiceBooking.error.code,
+        message: duplicateServiceBooking.error.message,
+      });
+      return {
+        ok: false as const,
+        error: "We could not verify your existing appointments. Please try again.",
+      };
+    }
+
+    const appointment = duplicateServiceBooking.data?.[0];
+    if (appointment) {
+      const conflictingService = appointment.appointment_services[0];
+      return {
+        ok: false as const,
+        error: `You already have an appointment for "${conflictingService?.service_name ?? "the selected service"}" on ${formatDateLong(appointment.appointment_date)} at ${formatTime(String(appointment.start_time))}.`,
+      };
     }
 
     const totalDuration = services.data.reduce(
@@ -601,7 +785,8 @@ export const createBooking = createServerFn({ method: "POST" })
       .select("assigned_crew_id,start_time,booking_duration_minutes")
       .eq("appointment_date", data.date)
       .eq("is_archived", false)
-      .not("status", "in", "(cancelled,no_show)");
+      .is("rescheduled_to_appointment_id", null)
+      .not("status", "in", "(cancelled,rejected,no_show)");
     if (existingApptsRes.error) {
       return {
         ok: false as const,
@@ -675,6 +860,48 @@ export const createBooking = createServerFn({ method: "POST" })
 
     const total = services.data.reduce((sum, s) => sum + Number(s.price), 0);
 
+    if (rescheduledFrom) {
+      const request = await supabaseAdmin.rpc("submit_reschedule_request", {
+        p_appointment_id: rescheduledFrom.id,
+        p_request_id: data.idempotencyKey,
+        p_appointment_date: data.date,
+        p_start_time: `${startTime}:00`,
+        p_reason:
+          data.rescheduleReason?.trim() || "Customer requested a new appointment date and time.",
+      });
+
+      if (request.error) {
+        console.error("[Rescheduling] request write failed", {
+          code: request.error.code,
+          message: request.error.message,
+          details: request.error.details,
+        });
+        if (
+          /PGRST202|submit_reschedule_request|function .* does not exist/i.test(
+            request.error.message,
+          )
+        ) {
+          return {
+            ok: false as const,
+            error: "Rescheduling setup is incomplete. The shop needs to apply its database update.",
+          };
+        }
+        return {
+          ok: false as const,
+          error:
+            request.error.message ||
+            "We could not submit your reschedule request. Please try again.",
+        };
+      }
+
+      return {
+        ok: true as const,
+        reference: rescheduledFrom.reference_code,
+        total: rescheduledFrom.total_estimate,
+        rescheduleRequested: true as const,
+      };
+    }
+
     let reference = makeReference();
     for (let attempt = 0; attempt < 4; attempt++) {
       const existing = await supabaseAdmin
@@ -686,10 +913,10 @@ export const createBooking = createServerFn({ method: "POST" })
       reference = makeReference();
     }
 
-    const inserted = await supabaseAdmin.rpc("create_booking_atomic", {
+    const atomicInput = {
       p_reference_code: reference,
       p_booking_request_id: data.idempotencyKey,
-      p_customer_name: data.customerName,
+      p_customer_name: customerName,
       p_phone: data.phone,
       p_email: data.email || null,
       p_moto_brand: data.motoBrand,
@@ -709,14 +936,30 @@ export const createBooking = createServerFn({ method: "POST" })
         price: service.price,
         duration_minutes: service.duration_minutes ?? 60,
       })),
-      p_notification_title: `New booking ${reference}`,
-      p_notification_message: `${data.customerName} booked ${services.data.map((service) => service.name).join(", ")} on ${data.date}.`,
-    });
+      p_notification_title: rescheduledFrom
+        ? `Rescheduled appointment ${reference}`
+        : `New booking ${reference}`,
+      p_notification_message: `${customerName} ${rescheduledFrom ? "rescheduled" : "booked"} ${services.data.map((service) => service.name).join(", ")} on ${data.date}.`,
+      p_first_name: data.firstName.trim(),
+      p_middle_name: data.middleName.trim(),
+      p_last_name: data.lastName.trim(),
+    };
+    const inserted = await supabaseAdmin.rpc("create_booking_atomic", atomicInput);
 
     if (inserted.error?.code === "23P01") {
       return {
         ok: false as const,
         error: "That time was just booked. Please choose another available slot.",
+      };
+    }
+
+    if (
+      inserted.error?.code === "23505" &&
+      /already have an appointment for/i.test(inserted.error.message)
+    ) {
+      return {
+        ok: false as const,
+        error: inserted.error.message,
       };
     }
 
@@ -728,7 +971,9 @@ export const createBooking = createServerFn({ method: "POST" })
         hint: inserted.error.hint,
       });
       if (
-        /PGRST202|create_booking_atomic|function .* does not exist/i.test(inserted.error.message)
+        /PGRST202|create_(re)?scheduled_booking_atomic|function .* does not exist/i.test(
+          inserted.error.message,
+        )
       ) {
         return {
           ok: false as const,
@@ -744,7 +989,11 @@ export const createBooking = createServerFn({ method: "POST" })
       return { ok: false as const, error: "We could not save your booking. Please try again." };
     }
 
-    return { ok: true as const, reference: inserted.data[0]?.reference_code ?? reference, total };
+    return {
+      ok: true as const,
+      reference: inserted.data[0]?.reference_code ?? reference,
+      total,
+    };
   });
 
 const lookupSchema = z.object({
@@ -761,13 +1010,112 @@ async function findAppointment(reference: string, phone: string) {
   const res = await supabaseAdmin
     .from("appointments")
     .select(
-      "id,reference_code,customer_name,phone,email,moto_brand,moto_model,moto_variant,moto_year,plate_number,appointment_date,start_time,status,notes,total_estimate,created_at,appointment_services(service_name,price)",
+      "id,reference_code,customer_name,first_name,middle_name,last_name,phone,email,moto_brand,moto_model,moto_variant,moto_year,plate_number,appointment_date,start_time,status,notes,total_estimate,created_at,rescheduled_from_appointment_id,rescheduled_to_appointment_id,reschedule_count,last_reschedule_rejected_at,last_reschedule_rejection_message,pending_reschedule_request_id,pending_reschedule_date,pending_reschedule_start_time,pending_reschedule_reason,appointment_services(service_id,service_name,price)",
     )
     .eq("reference_code", normalizeReferenceCode(reference))
     .maybeSingle();
   if (!res.data || res.data.phone !== phone) return null;
   return res.data;
 }
+
+export const getRescheduleDetails = createServerFn({ method: "POST" })
+  .validator((input: unknown) => lookupSchema.parse(input))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const rateLimit = await checkPublicRequestRateLimit("rescheduling", 5, 15 * 60, data.phone);
+    if (rateLimit !== "allowed") {
+      return {
+        ok: false as const,
+        error:
+          rateLimit === "limited"
+            ? "Too many reschedule attempts. Please wait a few minutes before trying again."
+            : "Appointment rescheduling is temporarily unavailable. Please try again shortly.",
+      };
+    }
+
+    const appt = await findAppointment(data.reference, data.phone);
+    if (!appt) {
+      return {
+        ok: false as const,
+        error: "No appointment found for that reference code and mobile number.",
+      };
+    }
+    if (appt.rescheduled_to_appointment_id) {
+      return {
+        ok: false as const,
+        error: "This appointment has already been rescheduled. Please use the new reference.",
+      };
+    }
+    if (appt.pending_reschedule_request_id) {
+      return {
+        ok: false as const,
+        error: "A reschedule request for this appointment is already awaiting the shop's review.",
+      };
+    }
+    if (!["pending", "confirmed", "rescheduled"].includes(appt.status)) {
+      return {
+        ok: false as const,
+        error: "This appointment can no longer be rescheduled online. Please call the shop.",
+      };
+    }
+
+    const bookingRules = await getBookingRules();
+    if (
+      !isSlotBookable(
+        appt.appointment_date,
+        String(appt.start_time).slice(0, 5),
+        bookingRules.reschedulingNoticeHours,
+      )
+    ) {
+      return {
+        ok: false as const,
+        error: `Rescheduling needs ${bookingRules.reschedulingNoticeHours} hours notice. Please call the shop instead.`,
+      };
+    }
+
+    const serviceIds = (appt.appointment_services ?? []).flatMap((service) =>
+      service.service_id ? [service.service_id] : [],
+    );
+    if (serviceIds.length !== (appt.appointment_services ?? []).length || serviceIds.length === 0) {
+      return {
+        ok: false as const,
+        error:
+          "The original services are no longer available for online rescheduling. Please call the shop.",
+      };
+    }
+    const activeServices = await supabaseAdmin
+      .from("services")
+      .select("id")
+      .in("id", serviceIds)
+      .eq("is_active", true)
+      .eq("is_archived", false);
+    if (activeServices.error || activeServices.data.length !== serviceIds.length) {
+      return {
+        ok: false as const,
+        error:
+          "One or more original services are no longer available for online rescheduling. Please call the shop.",
+      };
+    }
+
+    return {
+      ok: true as const,
+      appointment: {
+        customerName: appt.customer_name,
+        firstName: appt.first_name ?? "",
+        middleName: appt.middle_name ?? "",
+        lastName: appt.last_name ?? "",
+        phone: appt.phone,
+        email: appt.email ?? "",
+        motoBrand: appt.moto_brand,
+        motoModel: appt.moto_model,
+        motoVariant: appt.moto_variant ?? "",
+        motoYear: String(appt.moto_year ?? new Date().getFullYear()),
+        plateNumber: appt.plate_number,
+        notes: appt.notes ?? "",
+        serviceIds,
+      },
+    };
+  });
 
 export const lookupAppointment = createServerFn({ method: "POST" })
   .validator((input: unknown) => lookupSchema.parse(input))
@@ -783,17 +1131,35 @@ export const lookupAppointment = createServerFn({ method: "POST" })
       };
     }
 
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const appt = await findAppointment(data.reference, data.phone);
     if (!appt)
       return {
         ok: false as const,
         error: "No appointment found for that reference code and mobile number.",
       };
+    const linkedIds = [
+      appt.rescheduled_from_appointment_id,
+      appt.rescheduled_to_appointment_id,
+    ].filter((id): id is string => Boolean(id));
+    const linkedReferences = new Map<string, string>();
+    if (linkedIds.length > 0) {
+      const linked = await supabaseAdmin
+        .from("appointments")
+        .select("id,reference_code")
+        .in("id", linkedIds);
+      if (!linked.error) {
+        for (const row of linked.data ?? []) linkedReferences.set(row.id, row.reference_code);
+      }
+    }
     return {
       ok: true as const,
       appointment: {
         reference: appt.reference_code,
         customerName: appt.customer_name,
+        firstName: appt.first_name ?? "",
+        middleName: appt.middle_name ?? "",
+        lastName: appt.last_name ?? "",
         phone: appt.phone,
         motorcycle: [appt.moto_brand, appt.moto_model, appt.moto_variant, appt.moto_year]
           .filter(Boolean)
@@ -804,7 +1170,23 @@ export const lookupAppointment = createServerFn({ method: "POST" })
         status: appt.status,
         notes: appt.notes,
         total: Number(appt.total_estimate),
+        hasReplacement: Boolean(appt.rescheduled_to_appointment_id),
+        rescheduleCount: appt.reschedule_count,
+        rescheduleRequestPending: Boolean(appt.pending_reschedule_request_id),
+        rescheduleRequestRejected: Boolean(appt.last_reschedule_rejected_at),
+        rescheduleRequestRejectionMessage: appt.last_reschedule_rejection_message,
+        requestedRescheduleDate: appt.pending_reschedule_date,
+        requestedRescheduleStartTime: appt.pending_reschedule_start_time
+          ? String(appt.pending_reschedule_start_time).slice(0, 5)
+          : null,
+        rescheduledFromReference: appt.rescheduled_from_appointment_id
+          ? (linkedReferences.get(appt.rescheduled_from_appointment_id) ?? null)
+          : null,
+        rescheduledToReference: appt.rescheduled_to_appointment_id
+          ? (linkedReferences.get(appt.rescheduled_to_appointment_id) ?? null)
+          : null,
         services: (appt.appointment_services ?? []).map((s) => ({
+          serviceId: s.service_id,
           name: s.service_name,
           price: Number(s.price),
         })),
@@ -837,7 +1219,19 @@ export const cancelAppointment = createServerFn({ method: "POST" })
         ok: false as const,
         error: "No appointment found for that reference code and mobile number.",
       };
-    if (!["pending", "confirmed"].includes(appt.status)) {
+    if (appt.rescheduled_to_appointment_id) {
+      return {
+        ok: false as const,
+        error: "This appointment has already been rescheduled. Please use the new reference.",
+      };
+    }
+    if (appt.pending_reschedule_request_id) {
+      return {
+        ok: false as const,
+        error: "A reschedule request is already awaiting the shop's review.",
+      };
+    }
+    if (!["pending", "confirmed", "rescheduled"].includes(appt.status)) {
       return {
         ok: false as const,
         error: "This appointment can no longer be cancelled online. Please call the shop.",

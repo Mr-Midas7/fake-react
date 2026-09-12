@@ -198,6 +198,30 @@
   padding-inline: clamp(1rem, 2.5vw, 3rem);
 }
 
+/* Desktop admin tables that need a more even column rhythm. The mobile card
+ * treatment below intentionally keeps its own compact labelled-row spacing. */
+@media (min-width: 768px) {
+  .admin-balanced-table {
+    width: 100%;
+    table-layout: fixed;
+  }
+
+  .admin-balanced-table th,
+  .admin-balanced-table td {
+    padding-inline: 0.75rem;
+  }
+
+  .admin-balanced-table th:first-child,
+  .admin-balanced-table td:first-child {
+    padding-left: 1rem;
+  }
+
+  .admin-balanced-table th:last-child,
+  .admin-balanced-table td:last-child {
+    padding-right: 1rem;
+  }
+}
+
 /* On phones, dense records become labelled cards instead of forcing a wide
  * table to scroll sideways. Desktop retains the normal table layout. */
 @media (max-width: 767px) {

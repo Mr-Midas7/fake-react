@@ -30,7 +30,9 @@ export const APPOINTMENT_STATUSES = [
   "confirmed",
   "in_progress",
   "completed",
+  "rescheduled",
   "cancelled",
+  "rejected",
   "no_show",
 ] as const;
 
@@ -43,12 +45,15 @@ export function statusLabel(status: string) {
 export function statusTone(status: string) {
   switch (status) {
     case "confirmed":
-      return "bg-primary/15 text-primary border-primary/30";
+      return "border-emerald-500/30 bg-emerald-500/15 text-emerald-400";
     case "in_progress":
       return "bg-accent/15 text-accent border-accent/30";
     case "completed":
-      return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
+      return "border-sky-500/30 bg-sky-500/15 text-sky-400";
+    case "rescheduled":
+      return "bg-accent/15 text-accent border-accent/30";
     case "cancelled":
+    case "rejected":
     case "no_show":
       return "bg-destructive/15 text-destructive border-destructive/30";
     default:
@@ -247,9 +252,11 @@ export function toLocalPhilippineMobile(value: string) {
   return sanitizePhilippineMobileInput(digits);
 }
 
-/** Convert a local 09XXXXXXXXX mobile number to the E.164 value stored in the database. */
+/** Convert local or E.164 Philippine mobile input to the canonical value stored in the database. */
 export function normalizePhilippineMobile(value: string): string | null {
-  const digits = sanitizePhilippineMobileInput(value);
+  const digits = value.replace(/\D/g, "");
+
+  if (/^639\d{9}$/.test(digits)) return `+${digits}`;
 
   if (/^09\d{9}$/.test(digits)) return `+63${digits.slice(1)}`;
 

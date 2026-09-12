@@ -134,8 +134,13 @@ export type Database = {
           booking_duration_minutes: number;
           customer_name: string;
           email: string | null;
+          first_name: string | null;
           id: string;
           is_archived: boolean;
+          last_reschedule_rejected_at: string | null;
+          last_reschedule_rejection_message: string | null;
+          last_name: string | null;
+          middle_name: string | null;
           moto_brand: string;
           moto_model: string;
           moto_variant: string | null;
@@ -143,7 +148,14 @@ export type Database = {
           notes: string | null;
           phone: string;
           plate_number: string;
+          pending_reschedule_date: string | null;
+          pending_reschedule_reason: string | null;
+          pending_reschedule_request_id: string | null;
+          pending_reschedule_start_time: string | null;
           reference_code: string;
+          reschedule_count: number;
+          rescheduled_from_appointment_id: string | null;
+          rescheduled_to_appointment_id: string | null;
           start_time: string;
           status: string;
           terms_accepted: boolean;
@@ -160,8 +172,13 @@ export type Database = {
           booking_duration_minutes?: number;
           customer_name: string;
           email?: string | null;
+          first_name?: string | null;
           id?: string;
           is_archived?: boolean;
+          last_reschedule_rejected_at?: string | null;
+          last_reschedule_rejection_message?: string | null;
+          last_name?: string | null;
+          middle_name?: string | null;
           moto_brand: string;
           moto_model: string;
           moto_variant?: string | null;
@@ -169,7 +186,14 @@ export type Database = {
           notes?: string | null;
           phone: string;
           plate_number: string;
+          pending_reschedule_date?: string | null;
+          pending_reschedule_reason?: string | null;
+          pending_reschedule_request_id?: string | null;
+          pending_reschedule_start_time?: string | null;
           reference_code: string;
+          reschedule_count?: number;
+          rescheduled_from_appointment_id?: string | null;
+          rescheduled_to_appointment_id?: string | null;
           start_time: string;
           status?: string;
           terms_accepted?: boolean;
@@ -186,8 +210,13 @@ export type Database = {
           booking_duration_minutes?: number;
           customer_name?: string;
           email?: string | null;
+          first_name?: string | null;
           id?: string;
           is_archived?: boolean;
+          last_reschedule_rejected_at?: string | null;
+          last_reschedule_rejection_message?: string | null;
+          last_name?: string | null;
+          middle_name?: string | null;
           moto_brand?: string;
           moto_model?: string;
           moto_variant?: string | null;
@@ -195,7 +224,14 @@ export type Database = {
           notes?: string | null;
           phone?: string;
           plate_number?: string;
+          pending_reschedule_date?: string | null;
+          pending_reschedule_reason?: string | null;
+          pending_reschedule_request_id?: string | null;
+          pending_reschedule_start_time?: string | null;
           reference_code?: string;
+          reschedule_count?: number;
+          rescheduled_from_appointment_id?: string | null;
+          rescheduled_to_appointment_id?: string | null;
           start_time?: string;
           status?: string;
           terms_accepted?: boolean;
@@ -446,6 +482,8 @@ export type Database = {
           category: string;
           created_at: string;
           description: string | null;
+          engine_cc: number | null;
+          fuel_type: string | null;
           id: string;
           image_url: string | null;
           in_stock: boolean;
@@ -455,6 +493,8 @@ export type Database = {
           name: string;
           price: number;
           sort_order: number;
+          stock_quantity: number;
+          transmission: string | null;
           updated_at: string;
         };
         Insert: {
@@ -462,6 +502,8 @@ export type Database = {
           category?: string;
           created_at?: string;
           description?: string | null;
+          engine_cc?: number | null;
+          fuel_type?: string | null;
           id?: string;
           image_url?: string | null;
           in_stock?: boolean;
@@ -471,6 +513,8 @@ export type Database = {
           name: string;
           price?: number;
           sort_order?: number;
+          stock_quantity?: number;
+          transmission?: string | null;
           updated_at?: string;
         };
         Update: {
@@ -478,6 +522,8 @@ export type Database = {
           category?: string;
           created_at?: string;
           description?: string | null;
+          engine_cc?: number | null;
+          fuel_type?: string | null;
           id?: string;
           image_url?: string | null;
           in_stock?: boolean;
@@ -487,6 +533,8 @@ export type Database = {
           name?: string;
           price?: number;
           sort_order?: number;
+          stock_quantity?: number;
+          transmission?: string | null;
           updated_at?: string;
         };
         Relationships: [];
@@ -690,6 +738,9 @@ export type Database = {
           p_booking_request_id: string;
           p_customer_name: string;
           p_email: string | null;
+          p_first_name: string;
+          p_last_name: string;
+          p_middle_name: string;
           p_moto_brand: string;
           p_moto_model: string;
           p_moto_variant: string | null;
@@ -708,6 +759,74 @@ export type Database = {
           appointment_id: string;
           reference_code: string;
         }[];
+      };
+      create_rescheduled_booking_atomic: {
+        Args: {
+          p_appointment_date: string;
+          p_assigned_crew_id: string | null;
+          p_booking_duration_minutes: number;
+          p_booking_request_id: string;
+          p_customer_name: string;
+          p_email: string | null;
+          p_moto_brand: string;
+          p_moto_model: string;
+          p_moto_variant: string | null;
+          p_moto_year: number;
+          p_notification_message: string;
+          p_notification_title: string;
+          p_notes: string | null;
+          p_original_appointment_id: string;
+          p_phone: string;
+          p_plate_number: string;
+          p_reference_code: string;
+          p_services: Json;
+          p_start_time: string;
+          p_total_estimate: number;
+        };
+        Returns: {
+          appointment_id: string;
+          reference_code: string;
+        }[];
+      };
+      review_pending_appointment: {
+        Args: {
+          p_appointment_id: string;
+          p_decision: string;
+        };
+        Returns: undefined;
+      };
+      review_reschedule_request: {
+        Args: {
+          p_appointment_id: string;
+          p_decision: string;
+        };
+        Returns: undefined;
+      };
+      submit_reschedule_request: {
+        Args: {
+          p_appointment_date: string;
+          p_appointment_id: string;
+          p_reason: string;
+          p_request_id: string;
+          p_start_time: string;
+        };
+        Returns: undefined;
+      };
+      update_appointment_details_atomic: {
+        Args: {
+          p_admin_notes: string | null;
+          p_appointment_date: string;
+          p_appointment_id: string;
+          p_assigned_crew_id: string | null;
+          p_crew_assignment_manual: boolean;
+          p_first_name: string;
+          p_last_name: string;
+          p_middle_name: string;
+          p_service_ids: string[];
+          p_start_time: string;
+          p_status: string;
+        };
+        Returns: undefined;
       };
       enforce_public_rate_limit: {
         Args: {

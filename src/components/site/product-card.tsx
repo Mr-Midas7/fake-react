@@ -38,11 +38,9 @@ export function ProductCard({ product }: { product: ProductRow }) {
             Featured
           </Badge>
         )}
-        {!product.in_stock && (
-          <Badge variant="outline" className="absolute top-2 right-2 bg-background/80 uppercase">
-            Out of stock
-          </Badge>
-        )}
+        <Badge variant="outline" className="absolute top-2 right-2 bg-background/80 uppercase">
+          {product.in_stock ? "In stock" : "Out of stock"}
+        </Badge>
       </div>
       <CardContent className="p-4 pb-5">
         <p className="text-xs tracking-widest text-accent uppercase">

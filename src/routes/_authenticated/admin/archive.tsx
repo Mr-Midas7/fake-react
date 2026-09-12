@@ -57,7 +57,14 @@ const ARCHIVE_TABS = [
   { value: "blocked-numbers", label: "Blocked Numbers" },
 ] as const;
 
-const APPOINTMENT_STATUSES = ["pending", "confirmed", "completed", "cancelled", "no_show"];
+const APPOINTMENT_STATUSES = [
+  "pending",
+  "confirmed",
+  "completed",
+  "cancelled",
+  "rejected",
+  "no_show",
+];
 
 type ArchiveFilters = {
   term: string;

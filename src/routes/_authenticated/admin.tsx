@@ -81,7 +81,7 @@ const groups = [
     items: [
       { title: "Mechanics", url: "/admin/mechanics", icon: UserCheck },
       { title: "Availability", url: "/admin/availability", icon: CalendarDays },
-      { title: "Blocked Numbers", url: "/admin/blocked-numbers", icon: Ban },
+      { title: "Blocked Customers", url: "/admin/blocked-numbers", icon: Ban },
     ],
   },
   {

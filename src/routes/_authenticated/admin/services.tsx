@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/page-header";
+import { ArchiveConfirmationDialog } from "@/components/admin/archive-confirmation-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -61,16 +62,20 @@ const blank = {
   duration_minutes: "60",
   is_active: true,
 };
+const ALL_CATEGORIES = "__all_categories__";
+const NEW_CATEGORY = "__new_category__";
 
 function ServicesAdmin() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Service | null>(null);
   const [form, setForm] = useState({ ...blank });
+  const [isCustomCategory, setIsCustomCategory] = useState(false);
   const [formErrors, setFormErrors] = useState<
     Partial<Record<"name" | "category" | "duration" | "price", string | undefined>>
   >({});
-  const [filterCategory, setFilterCategory] = useState<string>("");
+  const [filterCategory, setFilterCategory] = useState<string>(ALL_CATEGORIES);
+  const [archiveTarget, setArchiveTarget] = useState<string | null>(null);
   const hasValidNewPrice =
     editing !== null ||
     (form.price.trim() !== "" && Number.isFinite(Number(form.price)) && Number(form.price) >= 0);
@@ -92,6 +97,10 @@ function ServicesAdmin() {
     if (!services.data) return [];
     return Array.from(new Set(services.data.map((s) => s.category).filter(Boolean))).sort();
   }, [services.data]);
+  const categoryOptions = useMemo(
+    () => Array.from(new Set([blank.category, ...distinctCategories])).sort(),
+    [distinctCategories],
+  );
 
   const save = useMutation({
     mutationFn: async () => {
@@ -168,6 +177,7 @@ function ServicesAdmin() {
             onClick={() => {
               setEditing(null);
               setForm({ ...blank });
+              setIsCustomCategory(false);
               setFormErrors({});
               setOpen(true);
             }}
@@ -185,7 +195,7 @@ function ServicesAdmin() {
               <SelectValue placeholder="All categories" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All categories</SelectItem>
+              <SelectItem value={ALL_CATEGORIES}>All categories</SelectItem>
               {distinctCategories.map((c) => (
                 <SelectItem key={c} value={c}>
                   {c}
@@ -195,12 +205,12 @@ function ServicesAdmin() {
           </Select>
         </div>
 
-        {filterCategory && (
+        {filterCategory !== ALL_CATEGORIES && (
           <Button
             size="sm"
             variant="ghost"
             onClick={() => {
-              setFilterCategory("");
+              setFilterCategory(ALL_CATEGORIES);
             }}
           >
             Clear
@@ -223,7 +233,7 @@ function ServicesAdmin() {
             </TableHeader>
             <TableBody>
               {services.data
-                ?.filter((s) => !filterCategory || s.category === filterCategory)
+                ?.filter((s) => filterCategory === ALL_CATEGORIES || s.category === filterCategory)
                 .map((s) => (
                   <TableRow key={s.id}>
                     <TableCell data-label="Service">
@@ -264,13 +274,14 @@ function ServicesAdmin() {
                             duration_minutes: String(s.duration_minutes),
                             is_active: s.is_active,
                           });
+                          setIsCustomCategory(false);
                           setFormErrors({});
                           setOpen(true);
                         }}
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => archive.mutate(s.id)}>
+                      <Button size="sm" variant="ghost" onClick={() => setArchiveTarget(s.id)}>
                         <Archive className="h-4 w-4" />
                       </Button>
                     </TableCell>
@@ -303,25 +314,45 @@ function ServicesAdmin() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="service-category">Category</Label>
-              <Input
-                id="service-category"
-                list="service-category-options"
-                value={form.category}
-                onChange={(e) => {
-                  setForm({ ...form, category: e.target.value });
+              <Select
+                value={isCustomCategory ? NEW_CATEGORY : form.category}
+                onValueChange={(value) => {
+                  if (value === NEW_CATEGORY) {
+                    setIsCustomCategory(true);
+                    setForm({ ...form, category: "" });
+                  } else {
+                    setIsCustomCategory(false);
+                    setForm({ ...form, category: value });
+                  }
                   setFormErrors((current) => ({ ...current, category: undefined }));
                 }}
-                placeholder="e.g. maintenance"
-                aria-invalid={!!formErrors.category}
-              />
+              >
+                <SelectTrigger id="service-category" aria-invalid={!!formErrors.category}>
+                  <SelectValue placeholder="Select a category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categoryOptions.map((category) => (
+                    <SelectItem key={category} value={category}>
+                      {category}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value={NEW_CATEGORY}>Add a new category…</SelectItem>
+                </SelectContent>
+              </Select>
               <FieldError message={formErrors.category} />
-              <datalist id="service-category-options">
-                {distinctCategories.map((category) => (
-                  <option key={category} value={category} />
-                ))}
-              </datalist>
+              {isCustomCategory && (
+                <Input
+                  value={form.category}
+                  onChange={(e) => {
+                    setForm({ ...form, category: e.target.value });
+                    setFormErrors((current) => ({ ...current, category: undefined }));
+                  }}
+                  placeholder="e.g. maintenance"
+                  aria-label="New service category"
+                />
+              )}
               <p className="text-xs text-muted-foreground">
-                Select an existing category or enter a new one.
+                Select an existing category or add a new one.
               </p>
             </div>
             <div className="space-y-1.5">
@@ -382,6 +413,9 @@ function ServicesAdmin() {
             </label>
           </div>
           <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Close
+            </Button>
             <Button
               onClick={() => {
                 if (validateForm()) save.mutate();
@@ -393,6 +427,16 @@ function ServicesAdmin() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ArchiveConfirmationDialog
+        open={Boolean(archiveTarget)}
+        recordLabel="service"
+        pending={archive.isPending}
+        onOpenChange={(nextOpen) => !nextOpen && setArchiveTarget(null)}
+        onConfirm={() => {
+          if (archiveTarget) archive.mutate(archiveTarget);
+          setArchiveTarget(null);
+        }}
+      />
     </div>
   );
 }

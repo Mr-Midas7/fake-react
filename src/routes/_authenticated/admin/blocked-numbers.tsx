@@ -5,6 +5,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/page-header";
+import { ArchiveConfirmationDialog } from "@/components/admin/archive-confirmation-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FieldError } from "@/components/ui/field-error";
@@ -48,6 +49,7 @@ function BlockedNumbersPage() {
   const [open, setOpen] = useState(false);
   const [phone, setPhone] = useState("");
   const [reason, setReason] = useState("");
+  const [archiveTarget, setArchiveTarget] = useState<string | null>(null);
   const [phoneError, setPhoneError] = useState("");
 
   const blocked = useQuery({
@@ -147,7 +149,7 @@ function BlockedNumbersPage() {
   return (
     <div>
       <PageHeader
-        title="Blocked Numbers"
+        title="Blocked Customers"
         description="Phone numbers blocked from booking online."
         action={
           <Button
@@ -164,15 +166,21 @@ function BlockedNumbersPage() {
         }
       />
 
-      <Card className="border-border/70 bg-card/60">
+      <Card className="max-w-5xl border-border/70 bg-card/60">
         <CardContent className="overflow-x-auto p-0">
-          <Table className="admin-data-table">
+          <Table className="admin-data-table admin-balanced-table">
+            <colgroup>
+              <col style={{ width: "25%" }} />
+              <col style={{ width: "20%" }} />
+              <col style={{ width: "20%" }} />
+              <col style={{ width: "25%" }} />
+            </colgroup>
             <TableHeader>
               <TableRow>
                 <TableHead>Phone</TableHead>
                 <TableHead>Reason</TableHead>
-                <TableHead>Blocked on</TableHead>
-                <TableHead className="text-right">Action</TableHead>
+                <TableHead className="text-center">Blocked on</TableHead>
+                <TableHead className="text-center">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -181,21 +189,27 @@ function BlockedNumbersPage() {
                   <TableCell data-label="Phone" className="font-mono text-sm">
                     {b.phone}
                   </TableCell>
-                  <TableCell data-label="Reason" className="text-sm text-muted-foreground">
+                  <TableCell
+                    data-label="Reason"
+                    className="break-words text-sm text-muted-foreground"
+                  >
                     {b.reason || "—"}
                   </TableCell>
-                  <TableCell data-label="Blocked on" className="text-xs text-muted-foreground">
+                  <TableCell
+                    data-label="Blocked on"
+                    className="whitespace-nowrap text-center text-xs text-muted-foreground"
+                  >
                     {new Date(b.created_at).toLocaleDateString("en-PH", {
                       year: "numeric",
                       month: "short",
                       day: "numeric",
                     })}
                   </TableCell>
-                  <TableCell data-label="Action" className="text-right">
+                  <TableCell data-label="Action" className="text-center">
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => archive.mutate(b.id)}
+                      onClick={() => setArchiveTarget(b.id)}
                       disabled={archive.isPending}
                     >
                       <Archive className="h-4 w-4" /> Archive
@@ -264,6 +278,16 @@ function BlockedNumbersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ArchiveConfirmationDialog
+        open={Boolean(archiveTarget)}
+        recordLabel="blocked customer"
+        pending={archive.isPending}
+        onOpenChange={(nextOpen) => !nextOpen && setArchiveTarget(null)}
+        onConfirm={() => {
+          if (archiveTarget) archive.mutate(archiveTarget);
+          setArchiveTarget(null);
+        }}
+      />
     </div>
   );
 }

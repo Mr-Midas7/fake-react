@@ -37,12 +37,30 @@ export const Route = createFileRoute("/_authenticated/admin/prices")({
 
 function PricesPage() {
   const [historyItem, setHistoryItem] = useState<string | null>(null);
+  const [showArchives, setShowArchives] = useState(false);
 
   return (
     <div>
       <PageHeader
         title="Prices Management"
-        description="Update the price list for services and shop items. A change reason is recorded for every edit."
+        description={
+          showArchives
+            ? "Archived price records for services and shop items. Restore and deletion are managed from their respective Archives pages."
+            : "Update the price list for services and shop items. A change reason is recorded for every edit."
+        }
+        action={
+          <Button
+            variant={showArchives ? "default" : "outline"}
+            className={
+              showArchives
+                ? "bg-emerald-600 font-display text-white uppercase hover:bg-emerald-700"
+                : "border-border bg-muted font-display text-foreground uppercase shadow-sm hover:border-border hover:bg-muted/80 hover:text-foreground focus-visible:text-foreground focus-visible:ring-ring active:bg-muted/70 active:text-foreground [&_svg]:text-foreground hover:[&_svg]:text-foreground focus-visible:[&_svg]:text-foreground active:[&_svg]:text-foreground"
+            }
+            onClick={() => setShowArchives((current) => !current)}
+          >
+            {showArchives ? "Active" : "Archived"}
+          </Button>
+        }
       />
       <Tabs defaultValue="services">
         <TabsList className="mb-4 grid h-auto w-full grid-cols-2 p-1 sm:inline-flex sm:w-auto">
@@ -54,10 +72,10 @@ function PricesPage() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="services">
-          <PriceTable table="services" onHistoryClick={setHistoryItem} />
+          <PriceTable table="services" archived={showArchives} onHistoryClick={setHistoryItem} />
         </TabsContent>
         <TabsContent value="products">
-          <PriceTable table="products" onHistoryClick={setHistoryItem} />
+          <PriceTable table="products" archived={showArchives} onHistoryClick={setHistoryItem} />
         </TabsContent>
       </Tabs>
 
@@ -72,20 +90,21 @@ function PricesPage() {
 
 function PriceTable({
   table,
+  archived,
   onHistoryClick,
 }: {
   table: "services" | "products";
+  archived: boolean;
   onHistoryClick: (id: string) => void;
 }) {
   const qc = useQueryClient();
-  const [filter, setFilter] = useState<"active" | "deactivated">("active");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<Record<string, boolean>>({});
   const [priceErrors, setPriceErrors] = useState<Record<string, string>>({});
 
   const rows = useQuery({
-    queryKey: ["prices", table, filter],
+    queryKey: ["prices", table, archived],
     queryFn: async () => {
       const query =
         table === "products"
@@ -95,10 +114,7 @@ function PriceTable({
               .in("category", ["part", "accessory"])
           : supabase.from("services").select("id,name,price,is_active");
 
-      const { data, error } = await query
-        .eq("is_archived", false)
-        .eq("is_active", filter === "active")
-        .order("name");
+      const { data, error } = await query.eq("is_archived", archived).order("name");
       if (error) throw error;
       return Array.from(
         new Map(
@@ -175,33 +191,13 @@ function PriceTable({
   return (
     <Card className="mt-4 border-border/70 bg-card/60">
       <CardContent className="overflow-x-auto p-0">
-        <div className="p-4">
-          <div className="mb-4 flex gap-2">
-            <Button
-              size="sm"
-              variant={filter === "active" ? "default" : "outline"}
-              onClick={() => setFilter("active")}
-              className="font-display uppercase"
-            >
-              Active
-            </Button>
-            <Button
-              size="sm"
-              variant={filter === "deactivated" ? "default" : "outline"}
-              onClick={() => setFilter("deactivated")}
-              className="font-display uppercase"
-            >
-              Deactivated
-            </Button>
-          </div>
-        </div>
         <Table className="admin-data-table">
           <TableHeader>
             <TableRow>
               <TableHead>Item</TableHead>
               <TableHead>Current price</TableHead>
-              {filter === "active" && <TableHead>New price</TableHead>}
-              {filter === "active" && <TableHead>Reason</TableHead>}
+              {!archived && <TableHead>New price</TableHead>}
+              {!archived && <TableHead>Reason</TableHead>}
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Action</TableHead>
             </TableRow>
@@ -215,7 +211,7 @@ function PriceTable({
                 <TableCell data-label="Current price" className="text-sm text-primary">
                   {formatPHP(r.price)}
                 </TableCell>
-                {filter === "active" && (
+                {!archived && (
                   <>
                     <TableCell data-label="New price">
                       <div className="w-full">
@@ -250,9 +246,9 @@ function PriceTable({
                 <TableCell data-label="Action" className="text-right">
                   <div className="flex flex-wrap justify-end gap-2">
                     <Button size="sm" variant="ghost" onClick={() => onHistoryClick(r.id)}>
-                      History
+                      View History
                     </Button>
-                    {filter === "active" && (
+                    {!archived && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -270,7 +266,7 @@ function PriceTable({
         </Table>
         {rows.data?.length === 0 && (
           <p className="p-8 text-center text-sm text-muted-foreground">
-            {filter === "active" ? "No active items found." : "No deactivated items found."}
+            {archived ? "No archived price records found." : "No price records found."}
           </p>
         )}
       </CardContent>

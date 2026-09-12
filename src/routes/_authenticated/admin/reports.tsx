@@ -17,9 +17,11 @@ import {
   Wrench,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import type { DateRange } from "react-day-picker";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import exportLogoUrl from "@/assets/export-logo.png";
 import { PaginationControls } from "@/components/admin/pagination-controls";
 import {
   AlertDialog,
@@ -43,7 +45,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -74,25 +76,29 @@ export const Route = createFileRoute("/_authenticated/admin/reports")({
   component: ReportsPage,
 });
 
-const reportOptions = [
-  { value: "bookings", label: "Booking volume" },
-  { value: "services", label: "Service activity" },
-] as const;
-
 const periodOptions = [
+  { value: "today", label: "Today" },
   { value: "this_week", label: "This week" },
   { value: "this_month", label: "This month" },
   { value: "this_year", label: "This year" },
   { value: "custom", label: "Custom dates" },
 ] as const;
 
-const statusOptions = ["pending", "confirmed", "in_progress", "completed", "cancelled", "no_show"];
+const statusOptions = [
+  "pending",
+  "confirmed",
+  "in_progress",
+  "completed",
+  "rescheduled",
+  "cancelled",
+  "rejected",
+  "no_show",
+];
 
-type ReportKind = (typeof reportOptions)[number]["value"];
+type ReportKind = "bookings" | "services";
 type PeriodPreset = (typeof periodOptions)[number]["value"];
-type ExportType = "csv" | "pdf";
+type ExportType = "pdf" | "docx";
 type ReportFilters = {
-  reportKind: ReportKind;
   periodPreset: PeriodPreset;
   from: string;
   to: string;
@@ -107,6 +113,7 @@ type BookingRow = {
   reference_code: string;
   customer_name: string;
   appointment_date: string;
+  service: string;
   status: string;
   total_estimate: number | string;
 };
@@ -144,7 +151,8 @@ function ReportsPage() {
   const [filters, setFilters] = useState<ReportFilters>(initialFilters);
   const [page, setPage] = useState(0);
   const [pendingExport, setPendingExport] = useState<ExportType | null>(null);
-  const { reportKind, from, to, status, category, serviceName } = filters;
+  const reportKind: ReportKind = "bookings";
+  const { from, to, status, category, serviceName } = filters;
   const previousRange = useMemo(() => previousPeriodRange(from, to), [from, to]);
   const customDateError =
     draftFilters.periodPreset === "custom" && (!draftFilters.from || !draftFilters.to)
@@ -269,9 +277,10 @@ function ReportsPage() {
         serviceName,
       });
       const exportData = makeExportData(reportKind, allRows.rows, allRows.metrics);
-      if (pendingExport === "csv") exportCsv(exportData, reportKind, from, to);
       if (pendingExport === "pdf")
         await exportPdf(exportData, reportKind, reportTitle, reportScope, from, to);
+      if (pendingExport === "docx")
+        await exportDocx(exportData, reportKind, reportTitle, reportScope, from, to);
       await recordAdminActivityEvent({
         action: "exported",
         resourceType: "Reports",
@@ -287,7 +296,7 @@ function ReportsPage() {
     }
   }
 
-  const rowLabel = reportKind === "services" ? "service entries" : "bookings";
+  const rowLabel = "bookings";
 
   return (
     <div>
@@ -315,11 +324,11 @@ function ReportsPage() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => setPendingExport("csv")}>
-                <Download className="mr-2 h-4 w-4" /> Export CSV table
-              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setPendingExport("pdf")}>
                 <FileText className="mr-2 h-4 w-4" /> Export PDF table
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setPendingExport("docx")}>
+                <FileText className="mr-2 h-4 w-4" /> Export DOCX document
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -330,16 +339,23 @@ function ReportsPage() {
         <CardContent className="p-4 sm:p-5">
           <div className="mb-4 flex items-center gap-2">
             <Filter className="size-4 text-primary" aria-hidden="true" />
-            <h2 className="font-display text-base tracking-wide uppercase">Filter reports</h2>
+            <h2 className="font-display text-base tracking-wide uppercase">Filters</h2>
           </div>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-[minmax(0,.85fr)_minmax(0,.9fr)_minmax(0,1.25fr)_minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.25fr)_auto] lg:items-end">
             <FilterSelect
-              label="Report"
-              value={draftFilters.reportKind}
-              onValueChange={(value) =>
-                setDraftFilters((current) => ({ ...current, reportKind: value as ReportKind }))
-              }
-              options={reportOptions}
+              label="Service category"
+              value={draftFilters.category}
+              onValueChange={(value) => {
+                setDraftFilters((current) => ({
+                  ...current,
+                  category: value,
+                  serviceName: "all",
+                }));
+              }}
+              options={[
+                { value: "all", label: "All categories" },
+                ...categories.map((value) => ({ value, label: value })),
+              ]}
             />
             <div className="min-w-0 space-y-1.5">
               <Label>Service</Label>
@@ -362,6 +378,17 @@ function ReportsPage() {
                 </SelectContent>
               </Select>
             </div>
+            <FilterSelect
+              label="Booking status"
+              value={draftFilters.status}
+              onValueChange={(value) =>
+                setDraftFilters((current) => ({ ...current, status: value }))
+              }
+              options={[
+                { value: "all", label: "All statuses" },
+                ...statusOptions.map((value) => ({ value, label: statusLabel(value) })),
+              ]}
+            />
             <div className="min-w-0 space-y-1.5">
               <Label>Period</Label>
               <PeriodPicker
@@ -379,32 +406,6 @@ function ReportsPage() {
                 }
               />
             </div>
-            <FilterSelect
-              label="Service category"
-              value={draftFilters.category}
-              onValueChange={(value) => {
-                setDraftFilters((current) => ({
-                  ...current,
-                  category: value,
-                  serviceName: "all",
-                }));
-              }}
-              options={[
-                { value: "all", label: "All categories" },
-                ...categories.map((value) => ({ value, label: value })),
-              ]}
-            />
-            <FilterSelect
-              label="Booking status"
-              value={draftFilters.status}
-              onValueChange={(value) =>
-                setDraftFilters((current) => ({ ...current, status: value }))
-              }
-              options={[
-                { value: "all", label: "All statuses" },
-                ...statusOptions.map((value) => ({ value, label: statusLabel(value) })),
-              ]}
-            />
             <div className="flex gap-2 md:col-span-2 lg:col-span-1 lg:self-end">
               <Button
                 type="button"
@@ -546,9 +547,7 @@ function ReportsPage() {
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
               <div className="flex items-center gap-2">
                 <ListFilter className="size-4 text-primary" aria-hidden="true" />
-                <h2 className="font-display text-sm tracking-wide uppercase">
-                  Recent {reportKind === "bookings" ? "bookings" : "service activity"}
-                </h2>
+                <h2 className="font-display text-sm tracking-wide uppercase">Recent bookings</h2>
               </div>
               <span className="text-xs text-muted-foreground">
                 Page {data.data?.total ? page + 1 : 0} of{" "}
@@ -565,14 +564,14 @@ function ReportsPage() {
               </TableHeader>
               <TableBody>
                 {preview.rows.map((row, index) => (
-                  <TableRow key={`${row[0]}-${row[4] ?? ""}-${index}`}>
+                  <TableRow key={`${row[0]}-${index}`}>
                     {row.map((cell, cellIndex) => (
                       <TableCell
                         key={`${cellIndex}-${cell}`}
                         data-label={preview.headers[cellIndex]}
                         className="text-sm"
                       >
-                        {cellIndex === 3 ? (
+                        {preview.headers[cellIndex] === "Status" ? (
                           <Badge
                             variant="outline"
                             className={cn(
@@ -623,14 +622,24 @@ function ReportsPage() {
         open={pendingExport !== null}
         onOpenChange={(open) => !open && setPendingExport(null)}
       >
-        <AlertDialogContent>
+        <AlertDialogContent className="max-w-xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirm report export</AlertDialogTitle>
+            <AlertDialogTitle>Confirm {pendingExport?.toUpperCase()} export</AlertDialogTitle>
             <AlertDialogDescription>
-              Export the selected {reportTitle.toLowerCase()} with all {data.data?.total ?? 0}{" "}
-              {rowLabel} as a {pendingExport?.toUpperCase()} table?
+              You are about to export the selected {reportTitle.toLowerCase()} as a{" "}
+              <strong className="font-medium text-foreground">
+                {pendingExport?.toUpperCase()}
+              </strong>{" "}
+              file with all {data.data?.total ?? 0} {rowLabel}.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <ExportFormatPreview
+            format={pendingExport}
+            reportKind={reportKind}
+            title={reportTitle}
+            scope={reportScope}
+            data={preview}
+          />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={confirmExport}>
@@ -640,6 +649,144 @@ function ReportsPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+function ExportFormatPreview({
+  format,
+  reportKind,
+  title,
+  scope,
+  data,
+}: {
+  format: ExportType | null;
+  reportKind: ReportKind;
+  title: string;
+  scope: string;
+  data: ExportData;
+}) {
+  const isDocx = format === "docx";
+  const formatLabel = isDocx ? "Word document (.docx)" : "PDF document (.pdf)";
+  const previewRows = data.rows.slice(0, 3);
+
+  return (
+    <div className="rounded-lg border border-border bg-muted/20 p-3 sm:p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="grid size-8 place-items-center rounded-md bg-primary/10 text-primary">
+            <FileText className="size-4" aria-hidden="true" />
+          </span>
+          <div>
+            <p className="text-sm font-medium">{formatLabel}</p>
+            <p className="text-xs text-muted-foreground">Export preview</p>
+          </div>
+        </div>
+        <span className="rounded border border-border bg-background px-2 py-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+          {format}
+        </span>
+      </div>
+
+      {isDocx ? (
+        <div className="rounded-md border border-border bg-zinc-200/75 p-3 sm:p-4">
+          <div className="mx-auto aspect-[210/297] max-h-80 w-full max-w-56 overflow-hidden bg-white px-4 py-5 font-serif text-zinc-950 shadow-md">
+            <p className="text-center text-[7px] font-bold tracking-wide">{SHOP_EXPORT_NAME}</p>
+            <p className="mt-1 text-center text-[6px] font-bold uppercase">{title}</p>
+            <p className="mt-1 text-center text-[5px]">Generated: {formatBusinessTimestamp()}</p>
+            <p className="mt-3 text-[5px] leading-relaxed">Scope: {scope}</p>
+            <div className="mt-2 space-y-0.5 text-[5px] leading-relaxed">
+              {data.summary.map((item) => (
+                <p key={item}>{item}</p>
+              ))}
+            </div>
+            <ExportDocumentTable data={data} rows={previewRows} variant="docx" />
+            <div className="mt-3 text-right text-[5px] leading-relaxed">
+              <p className="font-bold">{SHOP_OWNER_NAME}</p>
+              <p>Shop Owner</p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-md border border-border bg-zinc-200/75 p-3 sm:p-4">
+          <div
+            className={cn(
+              "relative mx-auto overflow-hidden bg-white px-4 py-3 font-sans text-zinc-950 shadow-md",
+              reportKind === "services"
+                ? "aspect-[297/210] w-full"
+                : "aspect-[210/297] max-h-80 w-full max-w-56",
+            )}
+          >
+            <div className="flex items-center justify-center gap-1.5">
+              <img src={exportLogoUrl} alt="" className="size-5 object-contain" />
+              <p className="text-[7px] font-bold">{SHOP_EXPORT_NAME}</p>
+            </div>
+            <p className="mt-3 text-[6px] font-bold uppercase">{title}</p>
+            <p className="mt-1 text-[5px]">Generated: {formatBusinessTimestamp()}</p>
+            <p className="mt-1 text-[5px] leading-relaxed">Scope: {scope}</p>
+            <div className="mt-2 space-y-0.5 text-[5px]">
+              {data.summary.map((item) => (
+                <p key={item}>{item}</p>
+              ))}
+            </div>
+            <ExportDocumentTable data={data} rows={previewRows} variant="pdf" />
+            <div className="absolute right-4 bottom-3 w-20 text-center text-[5px]">
+              <div className="border-t border-zinc-700 pt-0.5 font-bold">{SHOP_OWNER_NAME}</div>
+              <p>Shop Owner</p>
+              <p>Signature over printed name</p>
+            </div>
+          </div>
+        </div>
+      )}
+      <p className="mt-2 text-xs text-muted-foreground">
+        This preview mirrors the actual {isDocx ? "Word document" : "PDF"} layout. The exported file
+        includes the complete table.
+      </p>
+    </div>
+  );
+}
+
+function ExportDocumentTable({
+  data,
+  rows,
+  variant,
+}: {
+  data: ExportData;
+  rows: string[][];
+  variant: "pdf" | "docx";
+}) {
+  return (
+    <table
+      className={cn(
+        "mt-2 w-full table-fixed border-collapse text-[4px] leading-tight",
+        variant === "docx" ? "border border-zinc-700" : "border border-zinc-500",
+      )}
+    >
+      <thead className={variant === "pdf" ? "bg-zinc-200" : "bg-white"}>
+        <tr>
+          {data.headers.map((header) => (
+            <th
+              key={header}
+              className="truncate border border-zinc-500 px-0.5 py-0.5 text-left font-bold"
+            >
+              {header}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, index) => (
+          <tr key={`${row.join("-")}-${index}`}>
+            {row.map((cell, cellIndex) => (
+              <td
+                key={`${cell}-${cellIndex}`}
+                className="truncate border border-zinc-500 px-0.5 py-0.5"
+              >
+                {cell}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -688,87 +835,150 @@ function PeriodPicker({
   onValueChange: (value: PeriodPreset) => void;
   onRangeChange: (range: { from: string; to: string }) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
+  const customOpenTimer = useRef<number | null>(null);
   const selectedRange = from
     ? { from: dateFromIso(from), to: to ? dateFromIso(to) : undefined }
     : undefined;
-  const label =
-    value === "custom"
-      ? formatDateRange(from, to)
-      : (periodOptions.find((option) => option.value === value)?.label ?? "Select period");
+  const [draftRange, setDraftRange] = useState<DateRange | undefined>(selectedRange);
+  const [calendarMonth, setCalendarMonth] = useState<Date>(() => selectedRange?.from ?? new Date());
+
+  function clearPendingCustomOpen() {
+    if (customOpenTimer.current === null) return;
+    window.clearTimeout(customOpenTimer.current);
+    customOpenTimer.current = null;
+  }
+
+  useEffect(() => clearPendingCustomOpen, []);
+
+  function scheduleCustomOpen() {
+    clearPendingCustomOpen();
+    setDraftRange(selectedRange);
+    setCalendarMonth(selectedRange?.from ?? new Date());
+    // Wait until Radix Select has finished restoring focus to its trigger.
+    // Opening sooner makes the Popover see that focus restoration as an
+    // outside interaction and dismiss itself immediately.
+    customOpenTimer.current = window.setTimeout(() => {
+      customOpenTimer.current = null;
+      setCustomOpen(true);
+    }, 100);
+  }
+
+  function handlePeriodValueChange(nextValue: string) {
+    const nextPeriod = nextValue as PeriodPreset;
+    if (nextPeriod !== "custom") {
+      clearPendingCustomOpen();
+      onValueChange(nextPeriod);
+      setCustomOpen(false);
+      return;
+    }
+
+    onValueChange("custom");
+    scheduleCustomOpen();
+  }
 
   return (
     <div className="space-y-1.5">
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            aria-label="Select report period"
-            aria-invalid={Boolean(error)}
-            title={label}
-            className="w-full justify-start px-3 text-left font-normal"
-          >
-            <CalendarRange className="mr-2 size-4 shrink-0 text-muted-foreground" />
-            <span
-              className={cn("truncate", value === "custom" && !from && "text-muted-foreground")}
-            >
-              {label}
-            </span>
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent
-          align="start"
-          className="w-auto max-w-[calc(100vw-2rem)] overflow-hidden p-0"
-        >
-          <div className="grid grid-cols-2 gap-1 border-b border-border p-2 sm:grid-cols-4">
-            {periodOptions.map((option) => (
-              <Button
-                key={option.value}
-                type="button"
-                variant={value === option.value ? "secondary" : "ghost"}
-                size="sm"
-                className="justify-start whitespace-nowrap sm:justify-center"
-                onClick={() => onValueChange(option.value)}
-              >
-                {option.label}
-              </Button>
-            ))}
+      <Popover
+        open={customOpen}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) clearPendingCustomOpen();
+          setCustomOpen(nextOpen);
+        }}
+      >
+        <PopoverAnchor asChild>
+          <div>
+            <Select value={value} onValueChange={handlePeriodValueChange}>
+              <SelectTrigger aria-label="Select report period" aria-invalid={Boolean(error)}>
+                <CalendarRange className="mr-2 size-4 shrink-0 text-muted-foreground" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {periodOptions.map((option) => (
+                  <SelectItem
+                    key={option.value}
+                    value={option.value}
+                    onPointerDown={option.value === "custom" ? scheduleCustomOpen : undefined}
+                    onKeyDown={(event) => {
+                      if (
+                        option.value === "custom" &&
+                        (event.key === "Enter" || event.key === " ")
+                      ) {
+                        scheduleCustomOpen();
+                      }
+                    }}
+                  >
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          {value === "custom" && (
-            <>
-              <Calendar
-                mode="range"
-                selected={selectedRange}
-                {...(selectedRange?.from ? { defaultMonth: selectedRange.from } : {})}
-                numberOfMonths={2}
-                onSelect={(range) =>
-                  onRangeChange({
-                    from: range?.from ? format(range.from, "yyyy-MM-dd") : "",
-                    to: range?.to ? format(range.to, "yyyy-MM-dd") : "",
-                  })
-                }
-              />
-              <div className="flex items-center justify-between gap-3 border-t border-border px-3 py-2">
-                <span className="min-w-0 truncate text-xs text-muted-foreground">
-                  {from ? formatDateRange(from, to) : "Choose a start and end date"}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="shrink-0"
-                  disabled={!from}
-                  onClick={() => onRangeChange({ from: "", to: "" })}
-                >
-                  Clear
-                </Button>
-              </div>
-            </>
-          )}
+        </PopoverAnchor>
+        <PopoverContent align="start" className="w-auto max-w-[calc(100vw-2rem)] p-2">
+          <div className="px-1 pb-2">
+            <p className="text-sm font-medium">Custom date range</p>
+            <p className="text-xs text-muted-foreground">Select a start date and an end date.</p>
+          </div>
+          <Calendar
+            mode="range"
+            selected={draftRange}
+            month={calendarMonth}
+            onMonthChange={setCalendarMonth}
+            onSelect={setDraftRange}
+            classNames={{
+              nav: "inset-x-auto left-1/2 w-48 -translate-x-1/2 justify-between",
+            }}
+          />
+          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+            <DateRangeValue label="Start date" value={draftRange?.from} />
+            <DateRangeValue label="End date" value={draftRange?.to} />
+          </div>
+          <div className="mt-3 flex justify-end gap-2 border-t border-border pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDraftRange(selectedRange);
+                setCustomOpen(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={!draftRange?.from || !draftRange.to}
+              onClick={() => {
+                if (!draftRange?.from || !draftRange.to) return;
+                const draftFrom = format(draftRange.from, "yyyy-MM-dd");
+                const draftTo = format(draftRange.to, "yyyy-MM-dd");
+                onRangeChange(
+                  draftFrom <= draftTo
+                    ? { from: draftFrom, to: draftTo }
+                    : { from: draftTo, to: draftFrom },
+                );
+                setCustomOpen(false);
+              }}
+            >
+              Apply
+            </Button>
+          </div>
         </PopoverContent>
       </Popover>
       <FieldError message={error} />
+    </div>
+  );
+}
+
+function DateRangeValue({ label, value }: { label: string; value: Date | undefined }) {
+  return (
+    <div className="rounded-md border border-border bg-muted/30 px-2 py-1.5">
+      <p className="text-[10px] tracking-wide text-muted-foreground uppercase">{label}</p>
+      <p className="mt-0.5 truncate font-medium text-foreground">
+        {value ? format(value, "MMM d, yyyy") : "Not selected"}
+      </p>
     </div>
   );
 }
@@ -845,11 +1055,12 @@ function makeExportData(
       .map(([name, count]) => `${statusLabel(name)} ${count}`)
       .join(", ") || "None";
   return {
-    headers: ["Reference", "Customer", "Date", "Status", "Estimate"],
+    headers: ["Reference", "Customer", "Date", "Service", "Status", "Estimate"],
     rows: bookingRows.map((row) => [
       row.reference_code,
       row.customer_name,
       formatDateLong(row.appointment_date),
+      row.service || "—",
       statusLabel(row.status),
       `PHP ${Number(row.total_estimate).toFixed(2)}`,
     ]),
@@ -865,7 +1076,6 @@ function makeExportData(
 function getInitialFilters(today: string): ReportFilters {
   const range = periodRange("this_month", today);
   return {
-    reportKind: "bookings",
     periodPreset: "this_month",
     ...range,
     category: "all",
@@ -892,6 +1102,7 @@ function formatDateRange(from: string, to: string) {
 }
 
 function periodRange(preset: Exclude<PeriodPreset, "custom">, today: string) {
+  if (preset === "today") return { from: today, to: today };
   if (preset === "this_week") {
     const day = new Date(`${today}T00:00:00`).getDay();
     return { from: addDays(today, -((day + 6) % 7)), to: today };
@@ -932,17 +1143,6 @@ function makeTrend(
     label: `${Math.abs(change).toFixed(change >= 10 ? 0 : 1)}%`,
     description: "vs. previous period",
   };
-}
-
-function exportCsv(data: ExportData, reportKind: ReportKind, from: string, to: string) {
-  const lines = data.rows.map((row) =>
-    row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(","),
-  );
-  downloadBlob(
-    [data.headers.join(","), ...lines].join("\n"),
-    `fake-rider-${fileName(reportKind)}-${from}-to-${to}.csv`,
-    "text/csv;charset=utf-8;",
-  );
 }
 
 async function exportPdf(
@@ -997,7 +1197,97 @@ async function exportPdf(
   doc.save(`fake-rider-${fileName(reportKind)}-${from}-to-${to}.pdf`);
 }
 
-function downloadBlob(contents: string, filename: string, type: string) {
+async function exportDocx(
+  data: ExportData,
+  reportKind: ReportKind,
+  title: string,
+  scope: string,
+  from: string,
+  to: string,
+) {
+  const {
+    AlignmentType,
+    Document,
+    Packer,
+    Paragraph,
+    Table,
+    TableCell,
+    TableRow,
+    TextRun,
+    WidthType,
+  } = await import("docx");
+
+  const headerRow = new TableRow({
+    tableHeader: true,
+    children: data.headers.map(
+      (header) =>
+        new TableCell({
+          children: [
+            new Paragraph({
+              children: [new TextRun({ text: header, bold: true, size: 18 })],
+            }),
+          ],
+        }),
+    ),
+  });
+  const rows = data.rows.map(
+    (row) =>
+      new TableRow({
+        children: row.map(
+          (cell) =>
+            new TableCell({
+              children: [new Paragraph({ children: [new TextRun({ text: cell, size: 18 })] })],
+            }),
+        ),
+      }),
+  );
+  const document = new Document({
+    sections: [
+      {
+        children: [
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: SHOP_EXPORT_NAME, bold: true, size: 32 })],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: title.toUpperCase(), bold: true, size: 24 })],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: `Generated: ${formatBusinessTimestamp()}`, size: 18 })],
+          }),
+          new Paragraph({ children: [new TextRun({ text: `Scope: ${scope}`, size: 18 })] }),
+          ...data.summary.map(
+            (line) => new Paragraph({ children: [new TextRun({ text: line, size: 18 })] }),
+          ),
+          new Paragraph({ text: "" }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [headerRow, ...rows],
+          }),
+          new Paragraph({ text: "" }),
+          new Paragraph({
+            alignment: AlignmentType.RIGHT,
+            children: [new TextRun({ text: SHOP_OWNER_NAME, bold: true, size: 18 })],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.RIGHT,
+            children: [new TextRun({ text: "Shop Owner", size: 16 })],
+          }),
+        ],
+      },
+    ],
+  });
+  const file = await Packer.toBlob(document);
+  downloadBlob(
+    file,
+    `fake-rider-${fileName(reportKind)}-${from}-to-${to}.docx`,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  );
+}
+
+function downloadBlob(contents: BlobPart, filename: string, type: string) {
   const url = URL.createObjectURL(new Blob([contents], { type }));
   const link = document.createElement("a");
   link.href = url;
@@ -1010,10 +1300,12 @@ function fileName(reportKind: ReportKind) {
 }
 
 function statusBarTone(status: string) {
-  if (status === "completed") return "bg-emerald-500";
-  if (status === "cancelled" || status === "no_show") return "bg-destructive";
+  if (status === "completed") return "bg-sky-500";
+  if (status === "cancelled" || status === "rejected" || status === "no_show") {
+    return "bg-destructive";
+  }
   if (status === "in_progress") return "bg-accent";
-  if (status === "confirmed") return "bg-primary";
+  if (status === "confirmed") return "bg-emerald-500";
   return "bg-muted-foreground";
 }
 

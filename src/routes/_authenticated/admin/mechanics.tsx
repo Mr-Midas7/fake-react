@@ -5,6 +5,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/page-header";
+import { ArchiveConfirmationDialog } from "@/components/admin/archive-confirmation-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -63,6 +64,7 @@ function MechanicsPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<CrewMember | null>(null);
   const [form, setForm] = useState({ ...blank });
+  const [archiveTarget, setArchiveTarget] = useState<string | null>(null);
   const [formErrors, setFormErrors] = useState<
     Partial<Record<"name" | "phone", string | undefined>>
   >({});
@@ -244,17 +246,25 @@ function MechanicsPage() {
         )}
       </div>
 
-      <Card className="border-border/70 bg-card/60">
+      <Card className="max-w-6xl border-border/70 bg-card/60">
         <CardContent className="overflow-x-auto p-0">
-          <Table className="admin-data-table">
+          <Table className="admin-data-table admin-balanced-table">
+            <colgroup>
+              <col style={{ width: "22.222%" }} />
+              <col style={{ width: "22.222%" }} />
+              <col style={{ width: "15%" }} />
+              <col style={{ width: "11.111%" }} />
+              <col style={{ width: "11.111%" }} />
+              <col style={{ width: "11.112%" }} />
+            </colgroup>
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Role</TableHead>
                 <TableHead>Phone</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Active</TableHead>
-                <TableHead className="text-right">Action</TableHead>
+                <TableHead className="text-center">Status</TableHead>
+                <TableHead className="text-center">Active</TableHead>
+                <TableHead className="text-center">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -278,12 +288,12 @@ function MechanicsPage() {
                       <TableCell data-label="Phone" className="text-sm">
                         {c.phone ?? "-"}
                       </TableCell>
-                      <TableCell data-label="Status">
+                      <TableCell data-label="Status" className="text-center">
                         <Badge variant="outline" className={`text-[10px] uppercase ${status.tone}`}>
                           {status.label}
                         </Badge>
                       </TableCell>
-                      <TableCell data-label="Active">
+                      <TableCell data-label="Active" className="text-center">
                         <Switch
                           checked={c.is_active}
                           onCheckedChange={(v) =>
@@ -291,7 +301,7 @@ function MechanicsPage() {
                           }
                         />
                       </TableCell>
-                      <TableCell data-label="Actions" className="space-x-1 text-right">
+                      <TableCell data-label="Actions" className="space-x-1 text-center">
                         <Button
                           size="sm"
                           variant="ghost"
@@ -308,7 +318,7 @@ function MechanicsPage() {
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button size="sm" variant="ghost" onClick={() => archive.mutate(c.id)}>
+                        <Button size="sm" variant="ghost" onClick={() => setArchiveTarget(c.id)}>
                           <Archive className="h-4 w-4" />
                         </Button>
                       </TableCell>
@@ -375,12 +385,25 @@ function MechanicsPage() {
             </div>
           </div>
           <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Close
+            </Button>
             <Button onClick={handleSave} disabled={add.isPending || !form.name.trim()}>
               Save
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ArchiveConfirmationDialog
+        open={Boolean(archiveTarget)}
+        recordLabel="mechanic"
+        pending={archive.isPending}
+        onOpenChange={(nextOpen) => !nextOpen && setArchiveTarget(null)}
+        onConfirm={() => {
+          if (archiveTarget) archive.mutate(archiveTarget);
+          setArchiveTarget(null);
+        }}
+      />
     </div>
   );
 }

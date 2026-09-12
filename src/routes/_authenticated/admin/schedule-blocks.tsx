@@ -1,12 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Plus, Archive } from "lucide-react";
+import { Plus, Archive, Pencil } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/page-header";
+import { ArchiveConfirmationDialog } from "@/components/admin/archive-confirmation-dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { FieldError } from "@/components/ui/field-error";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,13 +56,23 @@ export const Route = createFileRoute("/_authenticated/admin/schedule-blocks")({
   component: ScheduleBlocks,
 });
 
+type ScheduleBlock = {
+  id: string;
+  block_date: string;
+  start_time: string | null;
+  reason: string | null;
+};
+
 function ScheduleBlocks() {
   const qc = useQueryClient();
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [date, setDate] = useState("");
   const [slot, setSlot] = useState("all");
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const [reason, setReason] = useState("");
+  const [createConfirmationOpen, setCreateConfirmationOpen] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<string | null>(null);
   const [formErrors, setFormErrors] = useState<
     Partial<Record<"date" | "start" | "end", string | undefined>>
   >({});
@@ -62,31 +90,51 @@ function ScheduleBlocks() {
     },
   });
 
-  const add = useMutation({
+  function resetForm() {
+    setEditingId(null);
+    setDate("");
+    setReason("");
+    setSlot("all");
+    setCustomStart("");
+    setCustomEnd("");
+    setFormErrors({});
+  }
+
+  const save = useMutation({
     mutationFn: async () => {
-      if (slot === "all") {
+      const payload =
+        slot === "all"
+          ? {
+              block_date: date,
+              start_time: null,
+              reason: encodeBlockReason(null, reason.trim()),
+            }
+          : {
+              block_date: date,
+              start_time: `${customStart}:00`,
+              reason: encodeBlockReason(`${customEnd}:00`, reason.trim()),
+            };
+
+      if (editingId) {
+        const { error } = await supabase
+          .from("schedule_blocks")
+          .update(payload)
+          .eq("id", editingId);
+        if (error) throw error;
+        return "updated" as const;
+      }
+
+      {
         const { error } = await supabase.from("schedule_blocks").insert({
-          block_date: date,
-          start_time: null,
-          reason: encodeBlockReason(null, reason.trim()),
+          ...payload,
         });
         if (error) throw error;
-      } else if (slot === "custom") {
-        const { error } = await supabase.from("schedule_blocks").insert({
-          block_date: date,
-          start_time: `${customStart}:00`,
-          reason: encodeBlockReason(`${customEnd}:00`, reason.trim()),
-        });
-        if (error) throw error;
+        return "created" as const;
       }
     },
-    onSuccess: () => {
-      toast.success("Schedule blocked");
-      setDate("");
-      setReason("");
-      setSlot("all");
-      setCustomStart("");
-      setCustomEnd("");
+    onSuccess: (result) => {
+      toast.success(result === "updated" ? "Schedule block updated" : "Schedule blocked");
+      resetForm();
       qc.invalidateQueries({ queryKey: ["schedule-blocks"] });
     },
     onError: (err: Error) => {
@@ -137,7 +185,7 @@ function ScheduleBlocks() {
     },
   });
 
-  function handleAdd() {
+  function validateBlockForm() {
     const nextErrors: Partial<Record<"date" | "start" | "end", string>> = {};
     if (!date) nextErrors.date = "Choose the date to block.";
     if (slot === "custom") {
@@ -154,7 +202,26 @@ function ScheduleBlocks() {
       }
     }
     setFormErrors(nextErrors);
-    if (Object.keys(nextErrors).length === 0) add.mutate();
+    return Object.keys(nextErrors).length === 0;
+  }
+
+  function handleSave() {
+    if (validateBlockForm()) save.mutate();
+  }
+
+  function requestScheduleBlock() {
+    if (validateBlockForm()) setCreateConfirmationOpen(true);
+  }
+
+  function startEditing(block: ScheduleBlock) {
+    const { endTime, userReason } = decodeBlockReason(block.reason);
+    setEditingId(block.id);
+    setDate(block.block_date);
+    setSlot(block.start_time ? "custom" : "all");
+    setCustomStart(block.start_time ? String(block.start_time).slice(0, 5) : "");
+    setCustomEnd(endTime?.slice(0, 5) ?? "");
+    setReason(userReason);
+    setFormErrors({});
   }
 
   return (
@@ -260,21 +327,172 @@ function ScheduleBlocks() {
               placeholder="Holiday, team event..."
             />
           </div>
-          <Button onClick={handleAdd} disabled={add.isPending} className="font-display uppercase">
-            <Plus /> Block
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={requestScheduleBlock}
+              disabled={save.isPending || !!editingId}
+              className="font-display uppercase"
+            >
+              <Plus /> Block
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
-      <Card className="border-border/70 bg-card/60">
+      <AlertDialog open={createConfirmationOpen} onOpenChange={setCreateConfirmationOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Block this schedule?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will make the selected date or time range unavailable for new appointments.
+              Review the details before confirming.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Go back</AlertDialogCancel>
+            <AlertDialogAction disabled={save.isPending} onClick={handleSave}>
+              Confirm block
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog
+        open={Boolean(editingId)}
+        onOpenChange={(open) => {
+          if (!open) resetForm();
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-display uppercase">Edit schedule block</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>Date</Label>
+              <Input
+                type="date"
+                value={date}
+                onChange={(e) => {
+                  setDate(e.target.value);
+                  setFormErrors((current) => ({ ...current, date: undefined }));
+                }}
+                aria-invalid={!!formErrors.date}
+              />
+              <FieldError message={formErrors.date} />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Slot</Label>
+              <Select
+                value={slot}
+                onValueChange={(value) => {
+                  setSlot(value);
+                  setCustomStart("");
+                  setCustomEnd("");
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Whole day</SelectItem>
+                  <SelectItem value="custom">Custom Time Range</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {slot === "custom" && (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Start</Label>
+                  <Select
+                    value={customStart}
+                    onValueChange={(value) => {
+                      setCustomStart(value);
+                      setFormErrors((current) => ({ ...current, start: undefined }));
+                    }}
+                  >
+                    <SelectTrigger aria-invalid={!!formErrors.start}>
+                      <SelectValue placeholder="Start time" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {shopTimeOptions().map((time) => (
+                        <SelectItem key={time.value} value={time.value}>
+                          {time.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FieldError message={formErrors.start} />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>End</Label>
+                  <Select
+                    value={customEnd}
+                    onValueChange={(value) => {
+                      setCustomEnd(value);
+                      setFormErrors((current) => ({ ...current, end: undefined }));
+                    }}
+                  >
+                    <SelectTrigger aria-invalid={!!formErrors.end}>
+                      <SelectValue placeholder="End time" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {shopTimeOptions().map((time) => (
+                        <SelectItem key={time.value} value={time.value}>
+                          {time.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FieldError message={formErrors.end} />
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <Label>Reason</Label>
+              <Input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Holiday, team event..."
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={resetForm} disabled={save.isPending}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSave}
+              disabled={save.isPending}
+              className="font-display uppercase"
+            >
+              <Pencil /> Save changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Card className="max-w-5xl border-border/70 bg-card/60">
         <CardContent className="overflow-x-auto p-0">
-          <Table className="admin-data-table">
+          <Table className="admin-data-table admin-balanced-table">
+            <colgroup>
+              <col style={{ width: "25%" }} />
+              <col style={{ width: "25%" }} />
+              <col style={{ width: "25%" }} />
+              <col style={{ width: "25%" }} />
+            </colgroup>
             <TableHeader>
               <TableRow>
                 <TableHead>Date</TableHead>
                 <TableHead>Slot</TableHead>
                 <TableHead>Reason</TableHead>
-                <TableHead className="text-right">Action</TableHead>
+                <TableHead className="text-center">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -292,11 +510,30 @@ function ScheduleBlocks() {
                           ? `${formatTime(String(b.start_time).slice(0, 5))} – ${formatTime(endTime.slice(0, 5))}`
                           : formatTime(String(b.start_time).slice(0, 5))}
                     </TableCell>
-                    <TableCell data-label="Reason" className="text-sm text-muted-foreground">
+                    <TableCell
+                      data-label="Reason"
+                      className="break-words text-sm text-muted-foreground"
+                    >
                       {userReason || "-"}
                     </TableCell>
-                    <TableCell data-label="Action" className="text-right">
-                      <Button size="sm" variant="ghost" onClick={() => archive.mutate(b.id)}>
+                    <TableCell
+                      data-label="Action"
+                      className="space-x-1 whitespace-nowrap text-center"
+                    >
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => startEditing(b)}
+                        aria-label={`Edit schedule block for ${formatDateLong(b.block_date)}`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setArchiveTarget(b.id)}
+                        aria-label={`Archive schedule block for ${formatDateLong(b.block_date)}`}
+                      >
                         <Archive className="h-4 w-4" />
                       </Button>
                     </TableCell>
@@ -310,6 +547,16 @@ function ScheduleBlocks() {
           )}
         </CardContent>
       </Card>
+      <ArchiveConfirmationDialog
+        open={Boolean(archiveTarget)}
+        recordLabel="schedule block"
+        pending={archive.isPending}
+        onOpenChange={(nextOpen) => !nextOpen && setArchiveTarget(null)}
+        onConfirm={() => {
+          if (archiveTarget) archive.mutate(archiveTarget);
+          setArchiveTarget(null);
+        }}
+      />
     </div>
   );
 }

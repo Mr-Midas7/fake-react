@@ -721,6 +721,9 @@ function AvailabilityPage() {
             )}
           </div>
           <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+              Close
+            </Button>
             <Button onClick={handleSave} disabled={saveSchedule.isPending}>
               {saveSchedule.isPending && <Loader2 className="animate-spin" />}
               Save working days

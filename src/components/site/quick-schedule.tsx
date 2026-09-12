@@ -77,7 +77,7 @@ export function QuickSchedule() {
   const canConfirm = !!serviceId && !!date && !!time && !availability.isError;
 
   return (
-    <section className="site-container py-12">
+    <section className="site-container pt-5 pb-10 md:pt-6 md:pb-12">
       <Card className="border-border/70 bg-card/40">
         <CardContent className="p-6 md:p-8">
           <p className="text-xs tracking-[0.3em] text-accent uppercase">Quick schedule</p>

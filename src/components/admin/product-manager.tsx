@@ -4,6 +4,7 @@ import { forwardRef, useMemo, useImperativeHandle, useState } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
+import { ArchiveConfirmationDialog } from "@/components/admin/archive-confirmation-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FieldError } from "@/components/ui/field-error";
@@ -46,10 +47,15 @@ type Product = {
   price: number | string;
   image_url: string | null;
   in_stock: boolean;
+  stock_quantity: number;
+  engine_cc: number | null;
+  fuel_type: "FI" | "Carbureted" | "Electric" | null;
+  transmission: "Manual" | "Semi-Automatic" | "Automatic" | null;
   is_featured: boolean;
   is_active: boolean;
   is_archived: boolean;
   sort_order: number;
+  created_at: string;
 };
 
 const blank = {
@@ -58,10 +64,17 @@ const blank = {
   description: "",
   price: "",
   image_url: "",
-  in_stock: true,
+  stock_quantity: "0",
+  engine_cc: "",
+  fuel_type: "FI" as "FI" | "Carbureted" | "Electric",
+  transmission: "Manual" as "Manual" | "Semi-Automatic" | "Automatic",
   is_featured: false,
   is_active: true,
 };
+const ALL_BRANDS = "__all_brands__";
+const ALL_MODELS = "__all_models__";
+const NO_BRAND = "__no_brand__";
+const NEW_BRAND = "__new_brand__";
 
 export interface ProductManagerHandle {
   openNew: () => void;
@@ -76,20 +89,40 @@ export const ProductManager = forwardRef<
   const [editing, setEditing] = useState<Product | null>(null);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ ...blank });
+  const [isCustomBrand, setIsCustomBrand] = useState(false);
   const [formErrors, setFormErrors] = useState<
-    Partial<Record<"name" | "brand" | "price" | "imageUrl" | "imageFile", string | undefined>>
+    Partial<
+      Record<
+        | "name"
+        | "brand"
+        | "engineCc"
+        | "fuelType"
+        | "transmission"
+        | "price"
+        | "stockQuantity"
+        | "imageUrl"
+        | "imageFile",
+        string | undefined
+      >
+    >
   >({});
   const [imageSource, setImageSource] = useState<"url" | "local">("url");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [filterBrand, setFilterBrand] = useState<string>("");
-  const [filterModel, setFilterModel] = useState<string>("");
+  const [filterBrand, setFilterBrand] = useState<string>(ALL_BRANDS);
+  const [filterModel, setFilterModel] = useState<string>(ALL_MODELS);
   const [filterStock, setFilterStock] = useState<"all" | "in_stock" | "out">("all");
+  const [archiveTarget, setArchiveTarget] = useState<string | null>(null);
   const hasValidNewPrice =
     isMotorcycle ||
     editing !== null ||
     (form.price.trim() !== "" && Number.isFinite(Number(form.price)) && Number(form.price) >= 0);
+  const hasValidStockQuantity =
+    isMotorcycle ||
+    (form.stock_quantity.trim() !== "" &&
+      Number.isInteger(Number(form.stock_quantity)) &&
+      Number(form.stock_quantity) >= 0);
 
   useImperativeHandle(ref, () => ({
     openNew,
@@ -105,7 +138,16 @@ export const ProductManager = forwardRef<
         .eq("is_archived", false)
         .order("sort_order");
       if (error) throw error;
-      return Array.from(new Map((data ?? []).map((p) => [p.name.trim(), p])).values()) as Product[];
+      const deduplicated = Array.from(
+        new Map((data ?? []).map((p) => [`${p.brand ?? ""}:${p.name.trim()}`, p])).values(),
+      ) as Product[];
+      return isMotorcycle
+        ? deduplicated.sort(
+            (a, b) =>
+              (a.brand ?? "").localeCompare(b.brand ?? "") ||
+              modelName(a).localeCompare(modelName(b), undefined, { sensitivity: "base" }),
+          )
+        : deduplicated;
     },
   });
 
@@ -116,12 +158,13 @@ export const ProductManager = forwardRef<
         .from("products")
         .select("id,brand,name")
         .eq("category", "motorcycle")
-        .eq("is_active", true)
         .eq("is_archived", false)
         .order("brand")
         .order("name");
       if (error) throw error;
-      return Array.from(new Map((data ?? []).map((m) => [m.name.trim(), m])).values());
+      return Array.from(
+        new Map((data ?? []).map((m) => [`${m.brand ?? ""}:${m.name.trim()}`, m])).values(),
+      );
     },
     enabled: isMotorcycle,
   });
@@ -135,7 +178,7 @@ export const ProductManager = forwardRef<
 
   const distinctModelsForBrand = useMemo(() => {
     if (!isMotorcycle || !motorcycleCatalog.data) return [];
-    if (!filterBrand) return [];
+    if (filterBrand === ALL_BRANDS) return [];
     return Array.from(
       new Set(
         motorcycleCatalog.data
@@ -159,10 +202,10 @@ export const ProductManager = forwardRef<
     if (!items.data) return [];
     let result = items.data;
     if (isMotorcycle) {
-      if (filterBrand) result = result.filter((p) => p.brand === filterBrand);
-      if (filterModel) result = result.filter((p) => p.name === filterModel);
+      if (filterBrand !== ALL_BRANDS) result = result.filter((p) => p.brand === filterBrand);
+      if (filterModel !== ALL_MODELS) result = result.filter((p) => p.name === filterModel);
     } else {
-      if (filterBrand) result = result.filter((p) => p.brand === filterBrand);
+      if (filterBrand !== ALL_BRANDS) result = result.filter((p) => p.brand === filterBrand);
       if (filterStock !== "all") {
         result = result.filter((p) => (filterStock === "in_stock" ? p.in_stock : !p.in_stock));
       }
@@ -183,7 +226,7 @@ export const ProductManager = forwardRef<
   }
 
   const save = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (): Promise<Product> => {
       let resolvedImageUrl: string | null = form.image_url.trim() || null;
       if (imageSource === "local" && uploadedFile) {
         setUploading(true);
@@ -198,22 +241,28 @@ export const ProductManager = forwardRef<
         const payload = {
           name: form.name.trim(),
           brand: form.brand.trim() || null,
+          engine_cc: form.fuel_type === "Electric" ? null : Number(form.engine_cc),
+          fuel_type: form.fuel_type,
+          transmission: form.transmission,
           description: form.description.trim() || null,
           image_url: resolvedImageUrl,
           is_active: form.is_active,
           category: editing ? editing.category : category,
         };
         const res = editing
-          ? await supabase.from("products").update(payload).eq("id", editing.id)
-          : await supabase.from("products").insert(payload);
+          ? await supabase.from("products").update(payload).eq("id", editing.id).select().single()
+          : await supabase.from("products").insert(payload).select().single();
         if (res.error) throw res.error;
+        return res.data as Product;
       } else {
+        const stockQuantity = Number(form.stock_quantity);
         const payload = {
           name: form.name.trim(),
           brand: form.brand.trim() || null,
           description: form.description.trim() || null,
           image_url: resolvedImageUrl,
-          in_stock: form.in_stock,
+          stock_quantity: stockQuantity,
+          in_stock: stockQuantity > 0,
           is_featured: form.is_featured,
           is_active: form.is_active,
           category: editing ? editing.category : category,
@@ -222,22 +271,48 @@ export const ProductManager = forwardRef<
         if (!hasValidNewPrice) {
           throw new Error("Enter a valid price.");
         }
+        if (!hasValidStockQuantity) {
+          throw new Error("Enter a whole stock quantity of 0 or more.");
+        }
 
         const res = editing
-          ? await supabase.from("products").update(payload).eq("id", editing.id)
-          : await supabase.from("products").insert({ ...payload, price: Number(form.price) });
+          ? await supabase.from("products").update(payload).eq("id", editing.id).select().single()
+          : await supabase
+              .from("products")
+              .insert({ ...payload, price: Number(form.price) })
+              .select()
+              .single();
         if (res.error) throw res.error;
+        return res.data as Product;
       }
     },
-    onSuccess: () => {
+    onSuccess: (savedProduct) => {
       toast.success(editing ? "Item updated" : "Item added");
       setOpen(false);
       setEditing(null);
       setForm({ ...blank });
+      setIsCustomBrand(false);
       setImageSource("url");
       setUploadedFile(null);
       setUploadPreview(null);
+      qc.setQueryData<Product[]>(["admin-products", category], (current) => {
+        const next = [
+          ...(current ?? []).filter((item) => item.id !== savedProduct.id),
+          savedProduct,
+        ];
+        return isMotorcycle
+          ? next.sort(
+              (a, b) =>
+                (a.brand ?? "").localeCompare(b.brand ?? "") ||
+                modelName(a).localeCompare(modelName(b), undefined, { sensitivity: "base" }),
+            )
+          : next;
+      });
       qc.invalidateQueries({ queryKey: ["admin-products", category] });
+      qc.invalidateQueries({ queryKey: ["admin-motorcycle-catalog"] });
+      qc.invalidateQueries({ queryKey: ["motorcycle-catalog"] });
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["featured-products"] });
     },
     onError: (err: Error) => {
       console.error("Save failed:", err);
@@ -267,6 +342,7 @@ export const ProductManager = forwardRef<
   function openNew() {
     setEditing(null);
     setForm({ ...blank });
+    setIsCustomBrand(isMotorcycle);
     setImageSource("url");
     setUploadedFile(null);
     setUploadPreview(null);
@@ -282,10 +358,14 @@ export const ProductManager = forwardRef<
       description: p.description ?? "",
       price: String(p.price),
       image_url: p.image_url ?? "",
-      in_stock: p.in_stock,
+      stock_quantity: String(p.stock_quantity),
+      engine_cc: p.engine_cc === null ? "" : String(p.engine_cc),
+      fuel_type: p.fuel_type ?? "FI",
+      transmission: p.transmission ?? "Manual",
       is_featured: p.is_featured,
       is_active: p.is_active,
     });
+    setIsCustomBrand(!brandOptions.includes(p.brand ?? ""));
     setImageSource(p.image_url ? "url" : "url");
     setUploadedFile(null);
     setUploadPreview(null);
@@ -295,7 +375,18 @@ export const ProductManager = forwardRef<
 
   function validateForm() {
     const nextErrors: Partial<
-      Record<"name" | "brand" | "price" | "imageUrl" | "imageFile", string>
+      Record<
+        | "name"
+        | "brand"
+        | "engineCc"
+        | "fuelType"
+        | "transmission"
+        | "price"
+        | "stockQuantity"
+        | "imageUrl"
+        | "imageFile",
+        string
+      >
     > = {};
     if (form.name.trim().length < 2) {
       nextErrors.name = "Enter an item name with at least 2 characters.";
@@ -303,8 +394,26 @@ export const ProductManager = forwardRef<
     if (isMotorcycle && !form.brand.trim()) {
       nextErrors.brand = "Enter the motorcycle brand.";
     }
+    if (
+      isMotorcycle &&
+      form.fuel_type !== "Electric" &&
+      (!form.engine_cc.trim() ||
+        !Number.isFinite(Number(form.engine_cc)) ||
+        Number(form.engine_cc) <= 0)
+    ) {
+      nextErrors.engineCc = "Enter an engine displacement greater than 0 cc.";
+    }
+    if (isMotorcycle && !["FI", "Carbureted", "Electric"].includes(form.fuel_type)) {
+      nextErrors.fuelType = "Select a fuel type.";
+    }
+    if (isMotorcycle && !["Manual", "Semi-Automatic", "Automatic"].includes(form.transmission)) {
+      nextErrors.transmission = "Select a transmission type.";
+    }
     if (!isMotorcycle && !editing && !hasValidNewPrice) {
       nextErrors.price = "Enter a valid price of PHP 0 or more.";
+    }
+    if (!hasValidStockQuantity) {
+      nextErrors.stockQuantity = "Enter a whole stock quantity of 0 or more.";
     }
     if (imageSource === "url" && form.image_url.trim()) {
       try {
@@ -331,14 +440,14 @@ export const ProductManager = forwardRef<
               value={filterBrand}
               onValueChange={(v) => {
                 setFilterBrand(v);
-                setFilterModel("");
+                setFilterModel(ALL_MODELS);
               }}
             >
               <SelectTrigger className="w-full sm:w-48">
                 <SelectValue placeholder="All brands" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All brands</SelectItem>
+                <SelectItem value={ALL_BRANDS}>All brands</SelectItem>
                 {distinctBrands.map((b) => (
                   <SelectItem key={b} value={b}>
                     {b}
@@ -349,12 +458,18 @@ export const ProductManager = forwardRef<
           </div>
           <div className="space-y-1.5">
             <Label className="text-sm">Model</Label>
-            <Select value={filterModel} onValueChange={setFilterModel} disabled={!filterBrand}>
+            <Select
+              value={filterModel}
+              onValueChange={setFilterModel}
+              disabled={filterBrand === ALL_BRANDS}
+            >
               <SelectTrigger className="w-full sm:w-56">
-                <SelectValue placeholder={filterBrand ? "All models" : "Select a brand first"} />
+                <SelectValue
+                  placeholder={filterBrand !== ALL_BRANDS ? "All models" : "Select a brand first"}
+                />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All models</SelectItem>
+                <SelectItem value={ALL_MODELS}>All models</SelectItem>
                 {distinctModelsForBrand.map((m) => (
                   <SelectItem key={m} value={m}>
                     {m.replace(new RegExp(`^${filterBrand} `), "")}
@@ -363,13 +478,13 @@ export const ProductManager = forwardRef<
               </SelectContent>
             </Select>
           </div>
-          {(filterBrand || filterModel) && (
+          {(filterBrand !== ALL_BRANDS || filterModel !== ALL_MODELS) && (
             <Button
               size="sm"
               variant="ghost"
               onClick={() => {
-                setFilterBrand("");
-                setFilterModel("");
+                setFilterBrand(ALL_BRANDS);
+                setFilterModel(ALL_MODELS);
               }}
             >
               Clear
@@ -387,7 +502,7 @@ export const ProductManager = forwardRef<
                 <SelectValue placeholder="All brands" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All brands</SelectItem>
+                <SelectItem value={ALL_BRANDS}>All brands</SelectItem>
                 {distinctBrandsForItems.map((b) => (
                   <SelectItem key={b} value={b}>
                     {b}
@@ -414,12 +529,12 @@ export const ProductManager = forwardRef<
             </Select>
           </div>
 
-          {(filterBrand || filterStock !== "all") && (
+          {(filterBrand !== ALL_BRANDS || filterStock !== "all") && (
             <Button
               size="sm"
               variant="ghost"
               onClick={() => {
-                setFilterBrand("");
+                setFilterBrand(ALL_BRANDS);
                 setFilterStock("all");
               }}
             >
@@ -451,27 +566,123 @@ export const ProductManager = forwardRef<
             </div>
             <div className="space-y-1.5">
               <Label htmlFor={`product-brand-${category}`}>Brand</Label>
-              <Input
-                id={`product-brand-${category}`}
-                list={`product-brand-options-${category}`}
-                value={form.brand}
-                onChange={(e) => {
-                  setForm({ ...form, brand: e.target.value });
+              <Select
+                value={
+                  isCustomBrand ? NEW_BRAND : form.brand || (isMotorcycle ? NEW_BRAND : NO_BRAND)
+                }
+                onValueChange={(value) => {
+                  if (value === NEW_BRAND) {
+                    setIsCustomBrand(true);
+                    setForm({ ...form, brand: "" });
+                  } else if (value === NO_BRAND) {
+                    setIsCustomBrand(false);
+                    setForm({ ...form, brand: "" });
+                  } else {
+                    setIsCustomBrand(false);
+                    setForm({ ...form, brand: value });
+                  }
                   setFormErrors((current) => ({ ...current, brand: undefined }));
                 }}
-                placeholder="Select or enter a brand"
-                aria-invalid={!!formErrors.brand}
-              />
+              >
+                <SelectTrigger id={`product-brand-${category}`} aria-invalid={!!formErrors.brand}>
+                  <SelectValue placeholder="Select a brand" />
+                </SelectTrigger>
+                <SelectContent>
+                  {!isMotorcycle && <SelectItem value={NO_BRAND}>No brand</SelectItem>}
+                  {brandOptions.map((brand) => (
+                    <SelectItem key={brand} value={brand}>
+                      {brand}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value={NEW_BRAND}>Add a new brand…</SelectItem>
+                </SelectContent>
+              </Select>
               <FieldError message={formErrors.brand} />
-              <datalist id={`product-brand-options-${category}`}>
-                {brandOptions.map((brand) => (
-                  <option key={brand} value={brand} />
-                ))}
-              </datalist>
+              {isCustomBrand && (
+                <Input
+                  value={form.brand}
+                  onChange={(e) => {
+                    setForm({ ...form, brand: e.target.value });
+                    setFormErrors((current) => ({ ...current, brand: undefined }));
+                  }}
+                  placeholder="Enter a new brand"
+                  aria-label="New brand"
+                />
+              )}
               <p className="text-xs text-muted-foreground">
-                Select an existing brand or enter a new one.
+                Select an existing brand or add a new one.
               </p>
             </div>
+            {isMotorcycle && (
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="motorcycle-engine-cc">Engine displacement (CC)</Label>
+                  <Input
+                    id="motorcycle-engine-cc"
+                    type="number"
+                    min="1"
+                    step="0.1"
+                    inputMode="decimal"
+                    value={form.engine_cc}
+                    disabled={form.fuel_type === "Electric"}
+                    onChange={(e) => {
+                      setForm({ ...form, engine_cc: e.target.value });
+                      setFormErrors((current) => ({ ...current, engineCc: undefined }));
+                    }}
+                    placeholder={form.fuel_type === "Electric" ? "N/A for electric" : "e.g. 155"}
+                    aria-invalid={!!formErrors.engineCc}
+                  />
+                  <FieldError message={formErrors.engineCc} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="motorcycle-fuel-type">Fuel / Power Type</Label>
+                  <Select
+                    value={form.fuel_type}
+                    onValueChange={(value: "FI" | "Carbureted" | "Electric") => {
+                      setForm({
+                        ...form,
+                        fuel_type: value,
+                        engine_cc: value === "Electric" ? "" : form.engine_cc,
+                      });
+                      setFormErrors((current) => ({ ...current, fuelType: undefined }));
+                    }}
+                  >
+                    <SelectTrigger id="motorcycle-fuel-type" aria-invalid={!!formErrors.fuelType}>
+                      <SelectValue placeholder="Select fuel type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="FI">FI</SelectItem>
+                      <SelectItem value="Carbureted">Carbureted</SelectItem>
+                      <SelectItem value="Electric">Electric</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FieldError message={formErrors.fuelType} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="motorcycle-transmission">Transmission</Label>
+                  <Select
+                    value={form.transmission}
+                    onValueChange={(value: "Manual" | "Semi-Automatic" | "Automatic") => {
+                      setForm({ ...form, transmission: value });
+                      setFormErrors((current) => ({ ...current, transmission: undefined }));
+                    }}
+                  >
+                    <SelectTrigger
+                      id="motorcycle-transmission"
+                      aria-invalid={!!formErrors.transmission}
+                    >
+                      <SelectValue placeholder="Select transmission" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Manual">Manual</SelectItem>
+                      <SelectItem value="Semi-Automatic">Semi-Automatic</SelectItem>
+                      <SelectItem value="Automatic">Automatic</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FieldError message={formErrors.transmission} />
+                </div>
+              </div>
+            )}
             {!isMotorcycle && (
               <div className="space-y-3">
                 <div className="space-y-1.5">
@@ -572,6 +783,28 @@ export const ProductManager = forwardRef<
                 only.
               </p>
             )}
+            {!isMotorcycle && (
+              <div className="space-y-1.5">
+                <Label>Stock Quantity</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputMode="numeric"
+                  value={form.stock_quantity}
+                  onChange={(e) => {
+                    setForm({ ...form, stock_quantity: e.target.value });
+                    setFormErrors((current) => ({ ...current, stockQuantity: undefined }));
+                  }}
+                  placeholder="0"
+                  aria-invalid={!!formErrors.stockQuantity}
+                />
+                <FieldError message={formErrors.stockQuantity} />
+                <p className="text-xs text-muted-foreground">
+                  Set to 0 to show this item as Out of Stock to customers.
+                </p>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label>Description</Label>
               <Textarea
@@ -582,11 +815,21 @@ export const ProductManager = forwardRef<
             <div className="flex flex-wrap gap-6 pt-1">
               {!isMotorcycle && (
                 <>
-                  <Toggle
-                    label="In stock"
-                    checked={form.in_stock}
-                    onChange={(v) => setForm({ ...form, in_stock: v })}
-                  />
+                  <div className="space-y-1.5">
+                    <Label>Status</Label>
+                    <Select
+                      value={form.is_active ? "active" : "deactivated"}
+                      onValueChange={(value) => setForm({ ...form, is_active: value === "active" })}
+                    >
+                      <SelectTrigger className="w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="active">Active</SelectItem>
+                        <SelectItem value="deactivated">Deactivated</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <Toggle
                     label="Featured"
                     checked={form.is_featured}
@@ -594,14 +837,19 @@ export const ProductManager = forwardRef<
                   />
                 </>
               )}
-              <Toggle
-                label="Visible in booking"
-                checked={form.is_active}
-                onChange={(v) => setForm({ ...form, is_active: v })}
-              />
+              {isMotorcycle && (
+                <Toggle
+                  label="Visible in booking"
+                  checked={form.is_active}
+                  onChange={(v) => setForm({ ...form, is_active: v })}
+                />
+              )}
             </div>
           </div>
           <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Close
+            </Button>
             <Button
               onClick={() => {
                 if (validateForm()) save.mutate();
@@ -614,32 +862,97 @@ export const ProductManager = forwardRef<
         </DialogContent>
       </Dialog>
 
-      <Card className="border-border/70 bg-card/60">
+      <Card className={cn("border-border/70 bg-card/60", isMotorcycle && "max-w-7xl")}>
         <CardContent className="overflow-x-auto p-0">
-          <Table className="admin-data-table">
+          <Table className={cn("admin-data-table", isMotorcycle && "admin-balanced-table")}>
+            {isMotorcycle && (
+              <colgroup>
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "22%" }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "8%" }} />
+              </colgroup>
+            )}
             <TableHeader>
               <TableRow>
-                <TableHead>Model</TableHead>
-                <TableHead>Brand</TableHead>
-                {isMotorcycle && <TableHead>Status</TableHead>}
+                {isMotorcycle && <TableHead>Date Created</TableHead>}
+                {isMotorcycle && <TableHead>Brand</TableHead>}
+                <TableHead>{isMotorcycle ? "Model" : "Item"}</TableHead>
+                {!isMotorcycle && <TableHead>Brand</TableHead>}
+                {isMotorcycle && <TableHead>CC</TableHead>}
+                {isMotorcycle && <TableHead>Fuel / Power Type</TableHead>}
+                {isMotorcycle && <TableHead>Transmission</TableHead>}
                 {!isMotorcycle && <TableHead>Price</TableHead>}
                 {!isMotorcycle && <TableHead>Status</TableHead>}
-                <TableHead className="text-right">Actions</TableHead>
+                {!isMotorcycle && <TableHead>Featured</TableHead>}
+                {!isMotorcycle && (
+                  <TableHead className="w-20 whitespace-nowrap text-center">
+                    Stock Quantity
+                  </TableHead>
+                )}
+                <TableHead
+                  className={cn("whitespace-nowrap text-center", !isMotorcycle && "w-20 pl-0")}
+                >
+                  Actions
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredItems.map((p) => (
                 <TableRow key={p.id}>
-                  <TableCell data-label={isMotorcycle ? "Model" : "Item"}>
-                    <span className="block text-sm">{p.name}</span>
-                    {!isMotorcycle && (
-                      <span className="text-xs text-muted-foreground capitalize">{p.category}</span>
-                    )}
-                  </TableCell>
-                  <TableCell data-label="Brand" className="text-sm">
-                    {p.brand ?? "-"}
-                  </TableCell>
                   {isMotorcycle && (
+                    <TableCell
+                      data-label="Created on"
+                      className="whitespace-nowrap text-xs text-muted-foreground"
+                    >
+                      {formatModelCreatedOn(p.created_at)}
+                    </TableCell>
+                  )}
+                  {isMotorcycle && (
+                    <TableCell data-label="Brand" className="text-sm">
+                      {p.brand ?? "-"}
+                    </TableCell>
+                  )}
+                  {isMotorcycle && (
+                    <TableCell data-label="Model">
+                      <span className="block text-sm">{modelName(p)}</span>
+                    </TableCell>
+                  )}
+                  {!isMotorcycle && (
+                    <TableCell data-label="Item">
+                      <span className="block text-sm">{p.name}</span>
+                      <span className="text-xs text-muted-foreground capitalize">{p.category}</span>
+                    </TableCell>
+                  )}
+                  {!isMotorcycle && (
+                    <TableCell data-label="Brand" className="text-sm">
+                      {p.brand ?? "-"}
+                    </TableCell>
+                  )}
+                  {isMotorcycle && (
+                    <TableCell data-label="CC" className="text-sm">
+                      {formatEngineCc(p.engine_cc, p.fuel_type)}
+                    </TableCell>
+                  )}
+                  {isMotorcycle && (
+                    <TableCell data-label="Fuel / Power Type" className="text-sm">
+                      {p.fuel_type ?? "-"}
+                    </TableCell>
+                  )}
+                  {isMotorcycle && (
+                    <TableCell data-label="Transmission" className="text-sm">
+                      {p.transmission ?? "-"}
+                    </TableCell>
+                  )}
+                  {!isMotorcycle && (
+                    <TableCell data-label="Price" className="text-sm text-primary">
+                      {formatPHP(p.price)}
+                    </TableCell>
+                  )}
+                  {!isMotorcycle && (
                     <TableCell data-label="Status">
                       <Badge
                         variant="outline"
@@ -650,33 +963,35 @@ export const ProductManager = forwardRef<
                     </TableCell>
                   )}
                   {!isMotorcycle && (
-                    <TableCell data-label="Price" className="text-sm text-primary">
-                      {formatPHP(p.price)}
-                    </TableCell>
-                  )}
-                  {!isMotorcycle && (
-                    <TableCell data-label="Status" className="space-x-1">
-                      <Badge variant="outline" className="uppercase">
-                        {p.in_stock ? "In stock" : "Out"}
-                      </Badge>
-                      {p.is_featured && (
+                    <TableCell data-label="Featured">
+                      {p.is_featured ? (
                         <Badge className="bg-primary text-primary-foreground uppercase">
                           Featured
                         </Badge>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">-</span>
                       )}
-                      <Badge
-                        variant="outline"
-                        className={`uppercase ${activeStatusTone(p.is_active)}`}
-                      >
-                        {p.is_active ? "Active" : "Deactivated"}
-                      </Badge>
                     </TableCell>
                   )}
-                  <TableCell data-label="Actions" className="space-x-1 text-right">
+                  {!isMotorcycle && (
+                    <TableCell
+                      data-label="Stock Quantity"
+                      className="w-20 text-center font-mono text-sm"
+                    >
+                      {p.stock_quantity.toLocaleString()}
+                    </TableCell>
+                  )}
+                  <TableCell
+                    data-label="Actions"
+                    className={cn(
+                      "space-x-1 whitespace-nowrap text-center",
+                      !isMotorcycle && "w-20 pl-0",
+                    )}
+                  >
                     <Button size="sm" variant="ghost" onClick={() => openEdit(p)}>
                       <Pencil className="h-4 w-4" />
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => archive.mutate(p.id)}>
+                    <Button size="sm" variant="ghost" onClick={() => setArchiveTarget(p.id)}>
                       <Archive className="h-4 w-4" />
                     </Button>
                   </TableCell>
@@ -689,6 +1004,16 @@ export const ProductManager = forwardRef<
           )}
         </CardContent>
       </Card>
+      <ArchiveConfirmationDialog
+        open={Boolean(archiveTarget)}
+        recordLabel={isMotorcycle ? "motorcycle catalog item" : "part or accessory"}
+        pending={archive.isPending}
+        onOpenChange={(nextOpen) => !nextOpen && setArchiveTarget(null)}
+        onConfirm={() => {
+          if (archiveTarget) archive.mutate(archiveTarget);
+          setArchiveTarget(null);
+        }}
+      />
     </>
   );
 });
@@ -708,4 +1033,26 @@ function Toggle({
       {label}
     </label>
   );
+}
+
+function formatModelCreatedOn(createdAt: string) {
+  return new Intl.DateTimeFormat("en-PH", {
+    timeZone: "Asia/Manila",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(createdAt));
+}
+
+function modelName(product: Pick<Product, "name" | "brand">) {
+  const brandPrefix = product.brand ? `${product.brand} ` : "";
+  return product.name.startsWith(brandPrefix)
+    ? product.name.slice(brandPrefix.length)
+    : product.name;
+}
+
+function formatEngineCc(engineCc: number | null, fuelType: Product["fuel_type"]) {
+  if (fuelType === "Electric") return "N/A";
+  if (!engineCc) return "-";
+  return `${engineCc <= 500 ? "Small CC" : "Big CC"} (${engineCc.toLocaleString()}cc)`;
 }
