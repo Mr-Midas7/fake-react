@@ -20,7 +20,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent } from "@/components/ui/card";
@@ -93,11 +92,11 @@ const searchSchema = z.object({
 
 const turnstileEnabled = Boolean(import.meta.env["VITE_TURNSTILE_SITE_KEY"]);
 const MOBILE_BOOKING_STEPS = [
-  "Your details",
+  "Personal information",
   "Motorcycle details",
-  "Select services",
-  "Pick a schedule",
-  "Terms",
+  "Service selection",
+  "Date & time",
+  "Terms & total",
   "Review",
 ] as const;
 
@@ -129,7 +128,6 @@ type Errors = Partial<{
   email: string;
   motoBrand: string;
   motoModel: string;
-  motoYear: string;
   plateNumber: string;
   services: string;
   date: string;
@@ -147,7 +145,6 @@ const validationFieldOrder: (keyof Errors)[] = [
   "email",
   "motoBrand",
   "motoModel",
-  "motoYear",
   "plateNumber",
   "services",
   "rescheduleReason",
@@ -165,7 +162,6 @@ const validationFocusTargets: Partial<Record<keyof Errors, string>> = {
   email: "#booking-email",
   motoBrand: "#booking-moto-brand",
   motoModel: "#booking-moto-model",
-  motoYear: "#booking-moto-year",
   plateNumber: "#booking-plate-number",
   services: "#booking-services",
   rescheduleReason: "#reschedule-reason",
@@ -183,7 +179,6 @@ const validationSteps: Partial<Record<keyof Errors, number>> = {
   email: 1,
   motoBrand: 2,
   motoModel: 2,
-  motoYear: 2,
   plateNumber: 2,
   services: 3,
   rescheduleReason: 4,
@@ -212,7 +207,7 @@ function BookPage() {
     motoBrand: "",
     motoModel: "",
     motoVariant: "",
-    motoYear: "",
+    motoYear: String(new Date().getFullYear()),
     plateNumber: "",
     notes: "",
   });
@@ -224,10 +219,9 @@ function BookPage() {
   const [startTime, setStartTime] = useState<string>(search.startTime ?? "");
   const [terms, setTerms] = useState(false);
   const [mobileStep, setMobileStep] = useState(1);
-  const [useManualMotorcycle, setUseManualMotorcycle] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
   const [focusRequest, setFocusRequest] = useState<keyof Errors | null>(null);
-  const [bookingReviewOpen, setBookingReviewOpen] = useState(false);
+  const [bookingConfirmationOpen, setBookingConfirmationOpen] = useState(false);
   const [duplicateBookingMessage, setDuplicateBookingMessage] = useState<string | null>(null);
   const [result, setResult] = useState<{ reference: string; total: number } | null>(null);
   const [turnstileToken, setTurnstileToken] = useState("");
@@ -304,7 +298,6 @@ function BookPage() {
     });
     setServiceIds(appointment.serviceIds);
     setServiceCategory("all");
-    setUseManualMotorcycle(true);
     setDate("");
     setStartTime("");
     setMobileStep(4);
@@ -316,7 +309,7 @@ function BookPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("products")
-        .select("brand,name")
+        .select("brand,name,engine_cc,fuel_type,transmission")
         .eq("category", "motorcycle")
         .eq("is_active", true)
         .eq("is_archived", false)
@@ -329,19 +322,35 @@ function BookPage() {
     },
   });
 
+  const bookableMotorcycles = useMemo(
+    () =>
+      (motorcycleCatalog.data ?? []).filter((motorcycle) => {
+        const engineCc = Number(motorcycle.engine_cc);
+        const fuelType = motorcycle.fuel_type?.trim().toLowerCase();
+        const transmission = motorcycle.transmission?.trim().toLowerCase();
+        return (
+          Number.isFinite(engineCc) &&
+          engineCc >= 50 &&
+          engineCc <= 2000 &&
+          (fuelType === "fi" || fuelType?.startsWith("carb")) &&
+          ["manual", "semi-auto", "semi-automatic", "automatic"].includes(transmission ?? "")
+        );
+      }),
+    [motorcycleCatalog.data],
+  );
+
   const brands = useMemo(() => {
     const set = new Set<string>();
-    (motorcycleCatalog.data ?? []).forEach((p) => p.brand && set.add(p.brand));
+    bookableMotorcycles.forEach((p) => p.brand && set.add(p.brand));
     return Array.from(set).sort();
-  }, [motorcycleCatalog.data]);
+  }, [bookableMotorcycles]);
 
   const catalogUnavailable =
     motorcycleCatalog.isError || (!motorcycleCatalog.isLoading && brands.length === 0);
-  const enterMotorcycleManually = useManualMotorcycle || catalogUnavailable;
 
   const modelsForBrand = useMemo(() => {
     const seen = new Set<string>();
-    const list = (motorcycleCatalog.data ?? []).filter((p) => p.brand === form.motoBrand);
+    const list = bookableMotorcycles.filter((p) => p.brand === form.motoBrand);
     return list
       .filter((p) => {
         if (seen.has(p.name)) return false;
@@ -353,12 +362,25 @@ function BookPage() {
         label: p.name.replace(new RegExp(`^${p.brand} `), ""),
       }))
       .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
-  }, [motorcycleCatalog.data, form.motoBrand]);
+  }, [bookableMotorcycles, form.motoBrand]);
+
+  const motorcycleSelectionReady = Boolean(form.motoBrand && form.motoModel);
 
   const availability = useQuery<Availability>({
-    queryKey: ["availability", serviceIds, isReschedule],
-    queryFn: () => availabilityFn({ data: { days: 45, serviceIds, rescheduling: isReschedule } }),
-    enabled: serviceIds.length > 0,
+    queryKey: ["availability", serviceIds, form.motoBrand, form.motoModel, isReschedule],
+    queryFn: () =>
+      availabilityFn({
+        data: {
+          days: 45,
+          serviceIds,
+          rescheduling: isReschedule,
+          motorcycle: { brand: form.motoBrand, model: form.motoModel },
+          ...(isReschedule
+            ? { rescheduleReference: search.reschedule, reschedulePhone: search.phone }
+            : {}),
+        },
+      }),
+    enabled: serviceIds.length > 0 && motorcycleSelectionReady,
   });
 
   const dates = useMemo(
@@ -370,6 +392,7 @@ function BookPage() {
     () => (availability.data && date ? computeAvailableSlots(availability.data, date) : []),
     [availability.data, date],
   );
+  const availableSlots = useMemo(() => slots.filter((slot) => !slot.disabled), [slots]);
 
   const availableDateSet = useMemo(() => new Set(dates), [dates]);
   const fullyBookedDates = useMemo(
@@ -391,14 +414,26 @@ function BookPage() {
   const filteredServices = (services.data ?? []).filter(
     (service) => serviceCategory === "all" || service.category === serviceCategory,
   );
-  const total = selectedServices.reduce((sum, s) => sum + Number(s.price), 0);
+  const serviceEstimates =
+    availability.data?.serviceEstimates ??
+    selectedServices.map((service) => ({
+      id: service.id,
+      name: service.name,
+      price: Number(service.price),
+      durationMinutes: service.duration_minutes ?? 60,
+      pricingSource: "default" as const,
+    }));
+  const estimatedServices = serviceIds
+    .map((serviceId) => serviceEstimates.find((service) => service.id === serviceId))
+    .filter((service): service is NonNullable<typeof service> => Boolean(service));
+  const total = estimatedServices.reduce((sum, service) => sum + service.price, 0);
   const customerFullName = [form.firstName, form.middleName, form.lastName]
     .map((part) => part.trim())
     .filter(Boolean)
     .join(" ");
-  const totalDuration = selectedServices.reduce(
-    (sum, service) => sum + (service.duration_minutes ?? 60),
-    selectedServices.length > 0 ? 30 : 0,
+  const totalDuration = estimatedServices.reduce(
+    (sum, service) => sum + service.durationMinutes,
+    estimatedServices.length > 0 ? 30 : 0,
   );
   const bookingTerms = shopSettings.data?.booking_terms || DEFAULT_BOOKING_TERMS;
 
@@ -466,7 +501,7 @@ function BookPage() {
     onSuccess: (res) => {
       if (!res.ok) {
         if (!isReschedule && isDuplicateBookingMessage(res.error)) {
-          setBookingReviewOpen(false);
+          setBookingConfirmationOpen(false);
           setDuplicateBookingMessage(res.error);
           setErrors(({ schedule: _, ...current }) => current);
           setDate("");
@@ -487,7 +522,7 @@ function BookPage() {
     },
     onError: (err: Error) => {
       if (!isReschedule && isDuplicateBookingMessage(err.message)) {
-        setBookingReviewOpen(false);
+        setBookingConfirmationOpen(false);
         setDuplicateBookingMessage(err.message);
         setErrors(({ schedule: _, ...current }) => current);
         setDate("");
@@ -527,9 +562,25 @@ function BookPage() {
     if (steps.includes(2)) {
       if (!form.motoBrand.trim()) e.motoBrand = "Required";
       if (!form.motoModel.trim()) e.motoModel = "Required";
-      const year = Number(form.motoYear);
-      if (!year || year < 1970 || year > new Date().getFullYear())
-        e.motoYear = "Enter a valid year";
+      if (!isReschedule && catalogUnavailable) {
+        e.motoBrand = "The motorcycle catalog is unavailable. Please try again shortly.";
+      }
+      if (
+        !isReschedule &&
+        !catalogUnavailable &&
+        form.motoBrand &&
+        !brands.includes(form.motoBrand)
+      ) {
+        e.motoBrand = "Select a brand from the motorcycle catalog.";
+      }
+      if (
+        !isReschedule &&
+        !catalogUnavailable &&
+        form.motoModel &&
+        !modelsForBrand.some((model) => model.value === form.motoModel)
+      ) {
+        e.motoModel = "Select a model from the motorcycle catalog.";
+      }
       if (form.plateNumber.trim().length < 2) e.plateNumber = "Required";
     }
     if (steps.includes(3) && serviceIds.length === 0) e.services = "Select at least one service.";
@@ -552,9 +603,7 @@ function BookPage() {
     const firstInvalidField = validationFieldOrder.find((field) => e[field]);
     if (!firstInvalidField) return true;
 
-    if (!window.matchMedia("(min-width: 768px)").matches) {
-      setMobileStep(validationSteps[firstInvalidField] ?? 1);
-    }
+    setMobileStep(validationSteps[firstInvalidField] ?? 1);
     setFocusRequest(firstInvalidField);
     return false;
   }
@@ -578,15 +627,15 @@ function BookPage() {
       mutation.mutate();
       return;
     }
-    setBookingReviewOpen(true);
+    setBookingConfirmationOpen(true);
   }
 
-  function confirmBookingDetails() {
+  function confirmBooking() {
     if (!validate()) {
-      setBookingReviewOpen(false);
+      setBookingConfirmationOpen(false);
       return;
     }
-    setBookingReviewOpen(false);
+    setBookingConfirmationOpen(false);
     mutation.mutate();
   }
 
@@ -700,7 +749,7 @@ function BookPage() {
             : "Schedule your motorcycle service online and secure an available appointment slot in advance."}
         </p>
 
-        <div className="sticky top-20 z-20 -mx-4 mt-6 border-y border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden">
+        <div className="sticky top-20 z-20 -mx-4 mt-6 border-y border-border/70 bg-background/95 px-4 py-3 backdrop-blur">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span className="font-medium text-foreground">Step {mobileStep} of 6</span>
             <span>{MOBILE_BOOKING_STEPS[mobileStep - 1]}</span>
@@ -740,17 +789,11 @@ function BookPage() {
           className="mt-10 space-y-8"
           onSubmit={(e) => {
             e.preventDefault();
-            if (window.matchMedia("(min-width: 768px)").matches || mobileStep === 6) {
-              submitBooking();
-            } else {
-              continueMobileBooking();
-            }
+            if (mobileStep === 6) submitBooking();
+            else continueMobileBooking();
           }}
         >
-          <Section
-            title="1. Customer information"
-            className={cn(mobileStep !== 1 && "hidden", "md:block")}
-          >
+          <Section title="1. Personal information" className={cn(mobileStep !== 1 && "hidden")}>
             {isReschedule && (
               <p className="mb-4 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm text-muted-foreground">
                 These details are verified against your original appointment when you submit.
@@ -831,116 +874,70 @@ function BookPage() {
             <WizardActions onContinue={continueMobileBooking} />
           </Section>
 
-          <Section
-            title="2. Motorcycle details"
-            className={cn(mobileStep !== 2 && "hidden", "md:block")}
-          >
+          <Section title="2. Motorcycle details" className={cn(mobileStep !== 2 && "hidden")}>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               <div className="md:col-span-2 lg:col-span-3">
-                {catalogUnavailable ? (
-                  <p className="text-sm text-muted-foreground">
-                    The motorcycle catalog is unavailable, so please enter your unit details below.
+                <p className="text-sm text-muted-foreground">
+                  Select your motorcycle from the catalog. Choose a brand first to see its valid
+                  models.
+                </p>
+                {catalogUnavailable && (
+                  <p className="mt-1 text-sm text-destructive">
+                    The motorcycle catalog is unavailable. Please try again shortly.
                   </p>
-                ) : (
-                  <label className="flex items-center gap-3 text-sm">
-                    <Checkbox
-                      checked={useManualMotorcycle}
-                      disabled={isReschedule}
-                      onCheckedChange={(value) => setUseManualMotorcycle(value === true)}
-                    />
-                    <span>My motorcycle isn&apos;t listed</span>
-                  </label>
                 )}
               </div>
 
-              {enterMotorcycleManually ? (
-                <>
-                  <Field label="Brand" error={errors.motoBrand}>
-                    <Input
-                      id="booking-moto-brand"
-                      value={form.motoBrand}
-                      maxLength={50}
-                      disabled={isReschedule}
-                      onChange={(e) => setForm({ ...form, motoBrand: e.target.value })}
-                      placeholder="e.g. Yamaha"
-                    />
-                  </Field>
-                  <Field label="Model" error={errors.motoModel}>
-                    <Input
-                      id="booking-moto-model"
-                      value={form.motoModel}
-                      maxLength={50}
-                      disabled={isReschedule}
-                      onChange={(e) => setForm({ ...form, motoModel: e.target.value })}
-                      placeholder="e.g. NMAX 155"
-                    />
-                  </Field>
-                </>
-              ) : (
-                <>
-                  <Field label="Brand" error={errors.motoBrand}>
-                    <Select
-                      value={form.motoBrand}
-                      onValueChange={(v) => setForm({ ...form, motoBrand: v, motoModel: "" })}
-                      disabled={isReschedule || motorcycleCatalog.isLoading}
-                    >
-                      <SelectTrigger id="booking-moto-brand">
-                        <SelectValue placeholder="Select a brand" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {brands.map((b) => (
-                          <SelectItem key={b} value={b}>
-                            {b}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field label="Model" error={errors.motoModel}>
-                    <Select
-                      value={form.motoModel}
-                      onValueChange={(v) => setForm({ ...form, motoModel: v })}
-                      disabled={isReschedule || !form.motoBrand || modelsForBrand.length === 0}
-                    >
-                      <SelectTrigger id="booking-moto-model">
-                        <SelectValue
-                          placeholder={form.motoBrand ? "Select a model" : "Select a brand first"}
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {modelsForBrand.map((m) => (
-                          <SelectItem key={m.value} value={m.value}>
-                            {m.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                </>
-              )}
-              <Field label="Version / variant (optional)">
-                <Input
-                  value={form.motoVariant}
-                  disabled={isReschedule}
-                  onChange={(e) => setForm({ ...form, motoVariant: e.target.value })}
-                  placeholder="Standard"
-                />
-              </Field>
-              <Field label="Year model" error={errors.motoYear}>
-                <Input
-                  id="booking-moto-year"
-                  value={form.motoYear}
-                  inputMode="numeric"
-                  maxLength={4}
-                  disabled={isReschedule}
-                  onChange={(e) => {
-                    const digits = e.target.value.replace(/\D/g, "");
-                    const year = Number(digits);
-                    if (digits.length === 4 && year > new Date().getFullYear()) return;
-                    setForm({ ...form, motoYear: digits });
+              <Field label="Brand" error={errors.motoBrand}>
+                <Select
+                  value={form.motoBrand}
+                  onValueChange={(v) => {
+                    setForm({ ...form, motoBrand: v, motoModel: "" });
+                    setDate("");
+                    setStartTime("");
                   }}
-                  placeholder="2022"
-                />
+                  disabled={isReschedule || motorcycleCatalog.isLoading || catalogUnavailable}
+                >
+                  <SelectTrigger id="booking-moto-brand">
+                    <SelectValue placeholder="Select a brand" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {brands.map((b) => (
+                      <SelectItem key={b} value={b}>
+                        {b}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Model" error={errors.motoModel}>
+                <Select
+                  value={form.motoModel}
+                  onValueChange={(v) => {
+                    setForm({ ...form, motoModel: v });
+                    setDate("");
+                    setStartTime("");
+                  }}
+                  disabled={
+                    isReschedule ||
+                    catalogUnavailable ||
+                    !form.motoBrand ||
+                    modelsForBrand.length === 0
+                  }
+                >
+                  <SelectTrigger id="booking-moto-model">
+                    <SelectValue
+                      placeholder={form.motoBrand ? "Select a model" : "Select a brand first"}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {modelsForBrand.map((m) => (
+                      <SelectItem key={m.value} value={m.value}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
               <Field label="Plate number" error={errors.plateNumber}>
                 <Input
@@ -957,9 +954,9 @@ function BookPage() {
           </Section>
 
           <Section
-            title="3. Select services"
+            title="3. Service selection"
             error={errors.services}
-            className={cn(mobileStep !== 3 && "hidden", "md:block")}
+            className={cn(mobileStep !== 3 && "hidden")}
           >
             <div className="mb-4 flex flex-wrap items-center gap-3">
               <Label htmlFor="booking-service-category">Service category</Label>
@@ -1004,20 +1001,14 @@ function BookPage() {
                       setStartTime("");
                     }}
                     className={cn(
-                      "flex items-start justify-between gap-3 rounded-lg border p-4 text-left transition-colors",
+                      "flex items-center rounded-lg border p-4 text-left transition-colors",
                       checked
                         ? "border-primary bg-primary/10"
                         : "border-border bg-card/50 hover:border-primary/50",
                       isReschedule && "cursor-not-allowed opacity-75",
                     )}
                   >
-                    <span>
-                      <span className="font-display block tracking-wide uppercase">{s.name}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {s.duration_minutes} mins
-                      </span>
-                    </span>
-                    <span className="font-display text-primary">{formatPHP(s.price)}</span>
+                    <span className="font-display block tracking-wide uppercase">{s.name}</span>
                   </button>
                 );
               })}
@@ -1037,21 +1028,13 @@ function BookPage() {
               </Link>{" "}
               for details to understand what each service includes.
             </p>
-            {selectedServices.length > 0 && (
-              <p className="mt-3 text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">
-                  {totalDuration} minutes reserved
-                </span>{" "}
-                including a 15-minute arrival buffer and a 15-minute post-service buffer.
-              </p>
-            )}
             <WizardActions onBack={goBackMobileBooking} onContinue={continueMobileBooking} />
           </Section>
 
           <Section
-            title="4. Pick a schedule"
+            title="4. Date and time selection"
             error={errors.schedule}
-            className={cn(mobileStep !== 4 && "hidden", "md:block")}
+            className={cn(mobileStep !== 4 && "hidden")}
           >
             {serviceIds.length === 0 ? (
               <p className="text-sm text-muted-foreground">
@@ -1142,7 +1125,7 @@ function BookPage() {
                           "rounded-lg ring-1 ring-destructive",
                       )}
                     >
-                      {slots.map((slot) => (
+                      {availableSlots.map((slot) => (
                         <button
                           type="button"
                           key={slot.id}
@@ -1157,11 +1140,14 @@ function BookPage() {
                           )}
                         >
                           <span className="font-display block">{formatTime(slot.startTime)}</span>
-                          <span className="block text-[11px] text-muted-foreground">
-                            {slot.disabled ? "Unavailable" : "Available"}
-                          </span>
+                          <span className="block text-[11px] text-muted-foreground">Available</span>
                         </button>
                       ))}
+                      {availableSlots.length === 0 && (
+                        <p className="col-span-full rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+                          No times remain available for this date. Select another available date.
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
@@ -1176,10 +1162,30 @@ function BookPage() {
           </Section>
 
           <Section
-            title="5. Terms and conditions"
+            title="5. Terms, conditions, and estimated total"
             error={errors.terms}
-            className={cn(mobileStep !== 5 && "hidden", "md:block")}
+            className={cn(mobileStep !== 5 && "hidden")}
           >
+            <div className="mb-5 rounded-lg border border-primary/30 bg-primary/5 p-4">
+              <p className="text-xs tracking-widest text-muted-foreground uppercase">
+                Estimated total
+              </p>
+              <p className="mt-1 font-display text-3xl text-primary">{formatPHP(total)}</p>
+              <div className="mt-3 space-y-1.5 text-sm text-muted-foreground">
+                {estimatedServices.map((service) => (
+                  <div key={service.id} className="flex items-center justify-between gap-3">
+                    <span>{service.name}</span>
+                    <span className="font-medium text-foreground">{formatPHP(service.price)}</span>
+                  </div>
+                ))}
+              </div>
+              {totalDuration > 0 && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Estimated appointment time: {totalDuration} minutes, including arrival and
+                  post-service buffers.
+                </p>
+              )}
+            </div>
             <div
               className={cn(
                 "flex items-start gap-3 rounded-md text-sm",
@@ -1232,41 +1238,77 @@ function BookPage() {
             <WizardActions onBack={goBackMobileBooking} onContinue={continueMobileBooking} />
           </Section>
 
-          <div
-            className={cn(
-              "flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card/60 p-5",
-              mobileStep !== 6 && "hidden md:flex",
-              mobileStep === 6 &&
-                "sticky bottom-0 z-20 bg-card/95 shadow-lg backdrop-blur md:static md:shadow-none",
-            )}
-          >
-            <div>
-              <p className="text-xs tracking-widest text-muted-foreground uppercase">
-                Estimated total
-              </p>
-              <p className="font-display text-3xl text-primary">{formatPHP(total)}</p>
-              {selectedServices.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {selectedServices.map((s) => (
-                    <Badge key={s.id} variant="outline">
-                      {s.name}
-                    </Badge>
-                  ))}
+          <Section title="6. Review" className={cn(mobileStep !== 6 && "hidden")}>
+            <p className="mb-5 text-sm text-muted-foreground">
+              Review the details below before confirming your appointment.
+            </p>
+            <div className="grid gap-5 lg:grid-cols-2">
+              <div className="space-y-3">
+                <p className="text-xs tracking-widest text-muted-foreground uppercase">
+                  Personal information
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <ReviewItem label="Customer" value={customerFullName} />
+                  <ReviewItem label="Mobile number" value={form.phone} />
+                  <ReviewItem label="Email" value={form.email || "Not provided"} />
                 </div>
-              )}
+              </div>
+              <div className="space-y-3">
+                <p className="text-xs tracking-widest text-muted-foreground uppercase">
+                  Motorcycle details
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <ReviewItem label="Brand" value={form.motoBrand} />
+                  <ReviewItem label="Model" value={form.motoModel} />
+                  <ReviewItem label="Plate number" value={form.plateNumber} />
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 space-y-3">
+              <p className="text-xs tracking-widest text-muted-foreground uppercase">
+                Appointment schedule
+              </p>
+              <ReviewItem
+                label="Date and time"
+                value={`${formatDateLong(date)} at ${formatTime(startTime)}`}
+              />
+            </div>
+            <div className="mt-6">
+              <p className="text-xs tracking-widest text-muted-foreground uppercase">
+                Selected services
+              </p>
+              <ul className="mt-2 divide-y divide-border rounded-lg border border-border/70">
+                {estimatedServices.map((service) => (
+                  <li
+                    key={service.id}
+                    className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 p-3"
+                  >
+                    <div>
+                      <p className="font-medium text-foreground">{service.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {service.durationMinutes} min · {servicePricingLabel(service.pricingSource)}
+                      </p>
+                    </div>
+                    <span className="font-medium text-primary">{formatPHP(service.price)}</span>
+                  </li>
+                ))}
+                <li className="flex flex-wrap items-center justify-between gap-3 bg-primary/5 p-3">
+                  <span className="font-medium">Estimated total</span>
+                  <span className="font-display text-xl text-primary">{formatPHP(total)}</span>
+                </li>
+              </ul>
               <p className="mt-2 text-xs text-muted-foreground">
-                Final availability is checked again when you confirm your booking.
+                Estimated appointment time: {totalDuration} minutes, including arrival and
+                post-service buffers.
               </p>
             </div>
+            <p className="mt-5 text-xs text-muted-foreground">
+              Final availability is checked again when you confirm your booking.
+            </p>
             <div className="w-full space-y-4 md:w-auto">
               <TurnstileChallenge resetKey={bookingRequestId} onToken={setTurnstileToken} />
               <div className="flex justify-between gap-3 md:justify-end">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="md:hidden"
-                  onClick={goBackMobileBooking}
-                >
+                <Button type="button" variant="outline" onClick={goBackMobileBooking}>
                   Back
                 </Button>
                 <Button
@@ -1282,86 +1324,27 @@ function BookPage() {
                 </Button>
               </div>
             </div>
-          </div>
+          </Section>
         </form>
         {!isReschedule && (
           <>
-            <AlertDialog open={bookingReviewOpen} onOpenChange={setBookingReviewOpen}>
-              <AlertDialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-2xl">
+            <AlertDialog open={bookingConfirmationOpen} onOpenChange={setBookingConfirmationOpen}>
+              <AlertDialogContent className="sm:max-w-md">
                 <AlertDialogHeader>
                   <AlertDialogTitle className="font-display text-2xl uppercase">
-                    Review your booking
+                    Confirm booking?
                   </AlertDialogTitle>
                   <AlertDialogDescription>
-                    Please confirm that all details are correct. Your appointment will only be sent
-                    to the shop after you confirm below.
+                    Your booking details are shown in the Review step. Submit the appointment only
+                    if everything is correct.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
-
-                <div className="space-y-5 text-sm">
-                  <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
-                    <p className="text-xs tracking-widest text-muted-foreground uppercase">
-                      Preferred schedule
-                    </p>
-                    <p className="mt-1 font-medium text-foreground">
-                      {formatDateLong(date)} at {formatTime(startTime)}
-                    </p>
-                  </div>
-
-                  <div>
-                    <p className="text-xs tracking-widest text-muted-foreground uppercase">
-                      Selected services
-                    </p>
-                    <ul className="mt-2 divide-y divide-border rounded-lg border border-border/70">
-                      {selectedServices.map((service) => (
-                        <li
-                          key={service.id}
-                          className="flex items-center justify-between gap-4 p-3"
-                        >
-                          <span>{service.name}</span>
-                          <span className="font-medium text-primary">
-                            {formatPHP(service.price)}
-                          </span>
-                        </li>
-                      ))}
-                      <li className="flex items-center justify-between gap-4 bg-muted/40 p-3 font-medium">
-                        <span>Estimated total</span>
-                        <span className="text-primary">{formatPHP(total)}</span>
-                      </li>
-                    </ul>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <ReviewItem label="Customer" value={customerFullName} />
-                    <ReviewItem label="Mobile number" value={form.phone} />
-                    <ReviewItem label="Email" value={form.email || "Not provided"} />
-                    <ReviewItem
-                      label="Motorcycle"
-                      value={[form.motoBrand, form.motoModel, form.motoVariant]
-                        .filter(Boolean)
-                        .join(" ")}
-                    />
-                    <ReviewItem label="Year model" value={form.motoYear} />
-                    <ReviewItem label="Plate number" value={form.plateNumber} />
-                  </div>
-
-                  {form.notes && (
-                    <div>
-                      <p className="text-xs tracking-widest text-muted-foreground uppercase">
-                        Notes
-                      </p>
-                      <p className="mt-1 rounded-lg border border-border/70 bg-muted/20 p-3 text-foreground">
-                        {form.notes}
-                      </p>
-                    </div>
-                  )}
-                </div>
 
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel / Go back</AlertDialogCancel>
                   <AlertDialogAction
                     disabled={mutation.isPending}
-                    onClick={confirmBookingDetails}
+                    onClick={confirmBooking}
                     className="bg-primary text-primary-foreground hover:bg-primary/90"
                   >
                     {mutation.isPending && <Loader2 className="animate-spin" />} Confirm Booking
@@ -1409,6 +1392,11 @@ function ReviewItem({ label, value }: { label: string; value: string }) {
   );
 }
 
+function servicePricingLabel(source: "default" | "model_override") {
+  if (source === "model_override") return "model override";
+  return "standard service rate";
+}
+
 function Section({
   title,
   error,
@@ -1431,7 +1419,7 @@ function Section({
 
 function WizardActions({ onBack, onContinue }: { onBack?: () => void; onContinue: () => void }) {
   return (
-    <div className="sticky bottom-0 z-20 -mx-6 mt-6 flex justify-between gap-3 border-t border-border/70 bg-card/95 px-6 pt-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-[0_-10px_20px_-18px_rgb(0_0_0_/_0.55)] backdrop-blur md:hidden">
+    <div className="mt-6 flex justify-between gap-3 border-t border-border/70 pt-4">
       {onBack ? (
         <Button type="button" variant="outline" onClick={onBack}>
           Back

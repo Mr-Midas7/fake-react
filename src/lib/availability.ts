@@ -74,6 +74,13 @@ export type Availability = {
   dates: string[];
   fullyBookedDates: string[];
   slotsByDate: Record<string, ComputedSlot[]>;
+  serviceEstimates?: Array<{
+    id: string;
+    name: string;
+    price: number;
+    durationMinutes: number;
+    pricingSource: "default" | "model_override";
+  }>;
 };
 
 function isNonSundayUnblockedDate(source: AvailabilitySource, date: string) {

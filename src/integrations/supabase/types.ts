@@ -142,7 +142,10 @@ export type Database = {
           last_name: string | null;
           middle_name: string | null;
           moto_brand: string;
+          moto_cc: number | null;
+          moto_fuel_type: string | null;
           moto_model: string;
+          moto_transmission: string | null;
           moto_variant: string | null;
           moto_year: number | null;
           notes: string | null;
@@ -180,7 +183,10 @@ export type Database = {
           last_name?: string | null;
           middle_name?: string | null;
           moto_brand: string;
+          moto_cc?: number | null;
+          moto_fuel_type?: string | null;
           moto_model: string;
+          moto_transmission?: string | null;
           moto_variant?: string | null;
           moto_year?: number | null;
           notes?: string | null;
@@ -218,7 +224,10 @@ export type Database = {
           last_name?: string | null;
           middle_name?: string | null;
           moto_brand?: string;
+          moto_cc?: number | null;
+          moto_fuel_type?: string | null;
           moto_model?: string;
+          moto_transmission?: string | null;
           moto_variant?: string | null;
           moto_year?: number | null;
           notes?: string | null;
@@ -443,6 +452,9 @@ export type Database = {
       price_history: {
         Row: {
           changed_by: string | null;
+          changed_by_email: string | null;
+          configuration_id: string | null;
+          configuration_label: string | null;
           created_at: string;
           id: string;
           item_id: string;
@@ -454,6 +466,9 @@ export type Database = {
         };
         Insert: {
           changed_by?: string | null;
+          changed_by_email?: string | null;
+          configuration_id?: string | null;
+          configuration_label?: string | null;
           created_at?: string;
           id?: string;
           item_id: string;
@@ -465,6 +480,9 @@ export type Database = {
         };
         Update: {
           changed_by?: string | null;
+          changed_by_email?: string | null;
+          configuration_id?: string | null;
+          configuration_label?: string | null;
           created_at?: string;
           id?: string;
           item_id?: string;
@@ -478,6 +496,7 @@ export type Database = {
       };
       products: {
         Row: {
+          archived_at: string | null;
           brand: string | null;
           category: string;
           created_at: string;
@@ -498,6 +517,7 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          archived_at?: string | null;
           brand?: string | null;
           category?: string;
           created_at?: string;
@@ -518,6 +538,7 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          archived_at?: string | null;
           brand?: string | null;
           category?: string;
           created_at?: string;
@@ -632,8 +653,94 @@ export type Database = {
         };
         Relationships: [];
       };
+      service_configurations: {
+        Row: {
+          cc_category: string;
+          created_at: string;
+          duration_minutes: number;
+          fuel_type: string;
+          id: string;
+          price: number;
+          service_id: string;
+          transmission: string;
+          updated_at: string;
+        };
+        Insert: {
+          cc_category: string;
+          created_at?: string;
+          duration_minutes: number;
+          fuel_type: string;
+          id?: string;
+          price: number;
+          service_id: string;
+          transmission: string;
+          updated_at?: string;
+        };
+        Update: {
+          cc_category?: string;
+          created_at?: string;
+          duration_minutes?: number;
+          fuel_type?: string;
+          id?: string;
+          price?: number;
+          service_id?: string;
+          transmission?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "service_configurations_service_id_fkey";
+            columns: ["service_id"];
+            isOneToOne: false;
+            referencedRelation: "services";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      service_model_overrides: {
+        Row: {
+          brand: string;
+          created_at: string;
+          duration_minutes: number;
+          id: string;
+          model: string;
+          price: number;
+          service_id: string;
+          updated_at: string;
+        };
+        Insert: {
+          brand: string;
+          created_at?: string;
+          duration_minutes: number;
+          id?: string;
+          model: string;
+          price: number;
+          service_id: string;
+          updated_at?: string;
+        };
+        Update: {
+          brand?: string;
+          created_at?: string;
+          duration_minutes?: number;
+          id?: string;
+          model?: string;
+          price?: number;
+          service_id?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "service_model_overrides_service_id_fkey";
+            columns: ["service_id"];
+            isOneToOne: false;
+            referencedRelation: "services";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       services: {
         Row: {
+          archived_at: string | null;
           category: string;
           created_at: string;
           description: string | null;
@@ -648,6 +755,7 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          archived_at?: string | null;
           category?: string;
           created_at?: string;
           description?: string | null;
@@ -662,6 +770,7 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          archived_at?: string | null;
           category?: string;
           created_at?: string;
           description?: string | null;
@@ -742,7 +851,10 @@ export type Database = {
           p_last_name: string;
           p_middle_name: string;
           p_moto_brand: string;
+          p_moto_cc: number;
+          p_moto_fuel_type: string;
           p_moto_model: string;
+          p_moto_transmission: string;
           p_moto_variant: string | null;
           p_moto_year: number;
           p_notification_message: string;

@@ -12,6 +12,16 @@ import { PageHeader } from "@/components/admin/page-header";
 import { ArchiveConfirmationDialog } from "@/components/admin/archive-confirmation-dialog";
 import { ActiveFilterChips } from "@/components/admin/active-filter-chips";
 import { PaginationControls } from "@/components/admin/pagination-controls";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -118,6 +128,37 @@ type AppointmentEditErrors = Partial<
   >
 >;
 
+function appointmentEditHasChanges(
+  appointment: AppointmentDetails,
+  form: AppointmentEditForm,
+): boolean {
+  const originalServiceIds = appointment.appointment_services
+    .map((service) => service.service_id)
+    .filter((serviceId): serviceId is string => Boolean(serviceId));
+
+  return (
+    form.firstName.trim() !== (appointment.first_name ?? "").trim() ||
+    form.middleName.trim() !== (appointment.middle_name ?? "").trim() ||
+    form.lastName.trim() !== (appointment.last_name ?? "").trim() ||
+    [...form.serviceIds].sort().join(",") !== [...originalServiceIds].sort().join(",") ||
+    form.appointmentDate !== appointment.appointment_date ||
+    form.startTime !== String(appointment.start_time).slice(0, 5) ||
+    form.assignedCrewId !== (appointment.assigned_crew_id ?? "none") ||
+    form.status !== appointment.status ||
+    form.adminNotes.trim() !== (appointment.admin_notes ?? "").trim()
+  );
+}
+
+function appointmentScheduleHasChanged(
+  appointment: AppointmentDetails,
+  form: AppointmentEditForm,
+): boolean {
+  return (
+    form.appointmentDate !== appointment.appointment_date ||
+    form.startTime !== String(appointment.start_time).slice(0, 5)
+  );
+}
+
 function AppointmentsPage() {
   const pageSize = 10;
   const qc = useQueryClient();
@@ -130,6 +171,7 @@ function AppointmentsPage() {
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<AppointmentEditForm | null>(null);
   const [editErrors, setEditErrors] = useState<AppointmentEditErrors>({});
+  const [pendingSaveForm, setPendingSaveForm] = useState<AppointmentEditForm | null>(null);
   const [datePeriod, setDatePeriod] = useState<AppointmentDatePeriod>("all");
   const [customDateRange, setCustomDateRange] = useState<DateRange>();
   const [page, setPage] = useState(0);
@@ -372,6 +414,7 @@ function AppointmentsPage() {
       toast.success("Appointment updated");
       setIsEditing(false);
       setEditErrors({});
+      setPendingSaveForm(null);
       qc.invalidateQueries({ queryKey: ["admin-appointments"], exact: false });
       qc.invalidateQueries({ queryKey: ["admin-dashboard"], exact: false });
       qc.invalidateQueries({ queryKey: ["archived-appointments"], exact: false });
@@ -416,6 +459,12 @@ function AppointmentsPage() {
   const rows = appointments.data?.rows ?? [];
   const typedRows = rows as AppointmentDetails[];
   const selectedAppointment = typedRows.find((appointment) => appointment.id === openId) ?? null;
+  const hasEditChanges = Boolean(
+    selectedAppointment && editForm && appointmentEditHasChanges(selectedAppointment, editForm),
+  );
+  const scheduleHasChanged = Boolean(
+    selectedAppointment && editForm && appointmentScheduleHasChanged(selectedAppointment, editForm),
+  );
   const activeFilters = [
     ...(term.trim() ? [{ label: "Search", value: term.trim(), onClear: () => setTerm("") }] : []),
     ...(status !== "all"
@@ -448,6 +497,7 @@ function AppointmentsPage() {
     setIsEditing(false);
     setEditForm(null);
     setEditErrors({});
+    setPendingSaveForm(null);
   }
 
   function startEditing(appointment: AppointmentDetails) {
@@ -466,6 +516,7 @@ function AppointmentsPage() {
       adminNotes: appointment.admin_notes ?? "",
     });
     setEditErrors({});
+    setPendingSaveForm(null);
     setIsEditing(true);
   }
 
@@ -496,6 +547,11 @@ function AppointmentsPage() {
   function handleSaveAppointment() {
     if (!selectedAppointment || !editForm) return;
 
+    if (!hasEditChanges) {
+      setEditErrors({ form: "No changes detected. Update at least one appointment detail first." });
+      return;
+    }
+
     const nextErrors: AppointmentEditErrors = {};
     if (editForm.firstName.trim().length < 2) {
       nextErrors.firstName = "Enter a valid first name.";
@@ -516,34 +572,42 @@ function AppointmentsPage() {
       nextErrors.startTime = "Select an appointment time.";
     }
 
-    if (appointmentAvailability.isLoading) {
-      nextErrors.schedule = "Available schedules are still loading. Please wait a moment.";
-    } else if (appointmentAvailability.isError || appointmentAvailability.data?.error) {
-      nextErrors.schedule =
-        appointmentAvailability.data?.error ??
-        "We could not verify available schedules. Please try again.";
-    } else if (!availableAppointmentDateSet.has(editForm.appointmentDate)) {
-      nextErrors.appointmentDate = "Choose an available appointment date.";
-    } else if (
-      !availableAppointmentSlots.some(
-        (slot) => slot.startTime === editForm.startTime && !slot.disabled,
-      )
-    ) {
-      nextErrors.startTime = "Choose an available appointment time.";
+    if (scheduleHasChanged) {
+      if (appointmentAvailability.isLoading) {
+        nextErrors.schedule = "Available schedules are still loading. Please wait a moment.";
+      } else if (appointmentAvailability.isError || appointmentAvailability.data?.error) {
+        nextErrors.schedule =
+          appointmentAvailability.data?.error ??
+          "We could not verify available schedules. Please try again.";
+      } else if (!availableAppointmentDateSet.has(editForm.appointmentDate)) {
+        nextErrors.appointmentDate = "Choose an available appointment date.";
+      } else if (
+        !availableAppointmentSlots.some(
+          (slot) => slot.startTime === editForm.startTime && !slot.disabled,
+        )
+      ) {
+        nextErrors.startTime = "Choose an available appointment time.";
+      }
     }
 
-    if (editForm.assignedCrewId !== "none") {
-      if (assignableCrew.isLoading) {
-        nextErrors.assignedCrew = "Checking crew availability. Please wait a moment.";
-      } else if (assignableCrew.isError || !assignableCrewIds.has(editForm.assignedCrewId)) {
-        nextErrors.assignedCrew =
-          "Choose a crew member who is free for the full appointment period.";
-      }
-    } else if (editForm.status === "confirmed" && !editForm.crewAssignmentManual) {
-      if (assignableCrew.isLoading) {
-        nextErrors.assignedCrew = "Checking crew availability. Please wait a moment.";
-      } else if (assignableCrew.isError || assignableCrewIds.size === 0) {
-        nextErrors.assignedCrew = "No crew member is available for this appointment period.";
+    const crewSelectionChanged =
+      editForm.assignedCrewId !== (selectedAppointment.assigned_crew_id ?? "none");
+    const confirmingAppointment =
+      editForm.status === "confirmed" && editForm.status !== selectedAppointment.status;
+    if (scheduleHasChanged || crewSelectionChanged || confirmingAppointment) {
+      if (editForm.assignedCrewId !== "none") {
+        if (assignableCrew.isLoading) {
+          nextErrors.assignedCrew = "Checking crew availability. Please wait a moment.";
+        } else if (assignableCrew.isError || !assignableCrewIds.has(editForm.assignedCrewId)) {
+          nextErrors.assignedCrew =
+            "Choose a crew member who is free for the full appointment period.";
+        }
+      } else if (editForm.status === "confirmed" && !editForm.crewAssignmentManual) {
+        if (assignableCrew.isLoading) {
+          nextErrors.assignedCrew = "Checking crew availability. Please wait a moment.";
+        } else if (assignableCrew.isError || assignableCrewIds.size === 0) {
+          nextErrors.assignedCrew = "No crew member is available for this appointment period.";
+        }
       }
     }
 
@@ -552,7 +616,14 @@ function AppointmentsPage() {
       return;
     }
 
-    saveAppointment.mutate({ id: selectedAppointment.id, form: editForm });
+    setPendingSaveForm({ ...editForm, serviceIds: [...editForm.serviceIds] });
+  }
+
+  function confirmSaveAppointment() {
+    if (!selectedAppointment || !pendingSaveForm) return;
+    const form = pendingSaveForm;
+    setPendingSaveForm(null);
+    saveAppointment.mutate({ id: selectedAppointment.id, form });
   }
 
   return (
@@ -841,9 +912,11 @@ function AppointmentsPage() {
                             }
                             onSelect={(selectedDate) => {
                               if (!selectedDate) return;
+                              const nextDate = format(selectedDate, "yyyy-MM-dd");
+                              if (nextDate === editForm.appointmentDate) return;
                               setEditForm({
                                 ...editForm,
-                                appointmentDate: format(selectedDate, "yyyy-MM-dd"),
+                                appointmentDate: nextDate,
                                 startTime: "",
                                 assignedCrewId: "none",
                                 crewAssignmentManual: false,
@@ -892,6 +965,7 @@ function AppointmentsPage() {
                               key={slot.id}
                               disabled={slot.disabled}
                               onClick={() => {
+                                if (slot.startTime === editForm.startTime) return;
                                 setEditForm({
                                   ...editForm,
                                   startTime: slot.startTime,
@@ -1021,6 +1095,11 @@ function AppointmentsPage() {
                       rows={4}
                     />
                   </div>
+                  {!hasEditChanges && (
+                    <p className="text-sm text-muted-foreground">
+                      No changes to save. Update at least one appointment detail first.
+                    </p>
+                  )}
                   <FieldError message={editErrors.form} />
                 </section>
               </div>
@@ -1108,7 +1187,7 @@ function AppointmentsPage() {
                 <Button
                   type="button"
                   onClick={handleSaveAppointment}
-                  disabled={saveAppointment.isPending}
+                  disabled={saveAppointment.isPending || !hasEditChanges}
                 >
                   {saveAppointment.isPending ? "Saving…" : "Save"}
                 </Button>
@@ -1121,6 +1200,31 @@ function AppointmentsPage() {
           </DialogContent>
         )}
       </Dialog>
+      <AlertDialog
+        open={Boolean(pendingSaveForm)}
+        onOpenChange={(open) => {
+          if (!open && !saveAppointment.isPending) setPendingSaveForm(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Save appointment changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Confirm that the updated appointment details are correct. The appointment will only be
+              changed after you confirm.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saveAppointment.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={saveAppointment.isPending}
+              onClick={confirmSaveAppointment}
+            >
+              {saveAppointment.isPending ? "Saving…" : "Confirm changes"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <ArchiveConfirmationDialog
         open={Boolean(archiveTarget)}
         recordLabel="appointment"

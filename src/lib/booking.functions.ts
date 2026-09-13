@@ -72,19 +72,144 @@ function firstBookableDate(rules: BookingRules) {
 
 const currentYear = new Date().getFullYear();
 
-const availabilitySchema = z.object({
-  days: z.number().int().min(7).max(90).default(45),
-  serviceIds: z
-    .array(z.string().uuid())
-    .max(6)
-    .refine((ids) => new Set(ids).size === ids.length, "Services must be unique")
-    .default([]),
-  // Administrators editing an appointment need to see the current slot as
-  // available while still applying the exact same booking rules to every
-  // other appointment.
-  excludeAppointmentId: z.string().uuid().optional(),
-  rescheduling: z.boolean().default(false),
+const motorcycleConfigurationSchema = z.object({
+  cc: z.number().int().min(50).max(2000),
+  ccCategory: z.enum(["Small", "Mid", "Big"]),
+  fuelType: z.enum(["FI", "Carburetor"]),
+  transmission: z.enum(["Manual", "Semi-Automatic", "Automatic"]),
 });
+
+const motorcycleSelectionSchema = z.object({
+  brand: z.string().trim().min(1).max(50),
+  model: z.string().trim().min(1).max(50),
+});
+
+type MotorcycleConfiguration = z.infer<typeof motorcycleConfigurationSchema>;
+
+function serviceCcCategory(engineCc: number): MotorcycleConfiguration["ccCategory"] {
+  if (engineCc <= 150) return "Small";
+  // The catalog includes 401–499cc motorcycles. Treat them as Mid so every
+  // valid catalog motorcycle has a deterministic configuration before Big.
+  if (engineCc < 500) return "Mid";
+  return "Big";
+}
+
+function catalogMotorcycleConfiguration(motorcycle: {
+  engine_cc: number | string | null;
+  fuel_type: string | null;
+  transmission: string | null;
+}): MotorcycleConfiguration | null {
+  const engineCc = Number(motorcycle.engine_cc);
+  const fuel = motorcycle.fuel_type?.trim().toLowerCase();
+  const fuelType = fuel === "fi" ? "FI" : fuel?.startsWith("carb") ? "Carburetor" : null;
+  const transmission = motorcycle.transmission?.trim().toLowerCase();
+  const transmissionType =
+    transmission === "manual"
+      ? "Manual"
+      : transmission === "semi-auto" || transmission === "semi-automatic"
+        ? "Semi-Automatic"
+        : transmission === "automatic"
+          ? "Automatic"
+          : null;
+
+  if (
+    !Number.isFinite(engineCc) ||
+    engineCc < 50 ||
+    engineCc > 2000 ||
+    !fuelType ||
+    !transmissionType
+  ) {
+    return null;
+  }
+
+  // Catalog data retains the manufacturer's exact displacement (for example,
+  // 156.9cc). Service pricing uses the matching administrative size category.
+  return {
+    cc: Math.round(engineCc),
+    ccCategory: serviceCcCategory(engineCc),
+    fuelType,
+    transmission: transmissionType,
+  };
+}
+
+type ResolvedService = {
+  id: string;
+  name: string;
+  price: number;
+  durationMinutes: number;
+  pricingSource: "default" | "model_override";
+};
+
+function resolveServicePricing(
+  services: Array<{ id: string; name: string; price: number; duration_minutes: number | null }>,
+  overrides: Array<{
+    service_id: string;
+    brand: string;
+    model: string;
+    duration_minutes: number;
+    price: number;
+  }>,
+  motorcycle?: { brand: string; model: string },
+): ResolvedService[] {
+  return services.map((service) => {
+    const override = motorcycle
+      ? overrides.find(
+          (item) =>
+            item.service_id === service.id &&
+            item.brand === motorcycle.brand &&
+            item.model === motorcycle.model,
+        )
+      : undefined;
+    if (override) {
+      return {
+        id: service.id,
+        name: service.name,
+        price: Number(override.price),
+        durationMinutes: override.duration_minutes,
+        pricingSource: "model_override",
+      };
+    }
+
+    return {
+      id: service.id,
+      name: service.name,
+      price: Number(service.price),
+      durationMinutes: service.duration_minutes ?? 60,
+      pricingSource: "default",
+    };
+  });
+}
+
+const availabilitySchema = z
+  .object({
+    days: z.number().int().min(7).max(90).default(45),
+    serviceIds: z
+      .array(z.string().uuid())
+      .max(6)
+      .refine((ids) => new Set(ids).size === ids.length, "Services must be unique")
+      .default([]),
+    // Administrators editing an appointment need to see the current slot as
+    // available while still applying the exact same booking rules to every
+    // other appointment.
+    excludeAppointmentId: z.string().uuid().optional(),
+    rescheduling: z.boolean().default(false),
+    motorcycle: motorcycleSelectionSchema.optional(),
+    rescheduleReference: z
+      .string()
+      .trim()
+      .regex(REFERENCE_CODE_PATTERN, "Enter a valid original appointment reference.")
+      .transform(normalizeReferenceCode)
+      .optional(),
+    reschedulePhone: phoneSchema.optional(),
+  })
+  .superRefine((data, context) => {
+    if (Boolean(data.rescheduleReference) !== Boolean(data.reschedulePhone)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "A reschedule reference and mobile number must be provided together.",
+      });
+    }
+  });
 
 const namePartSchema = z
   .string()
@@ -297,50 +422,73 @@ export const getAvailability = createServerFn({ method: "GET" })
       appointmentsQuery = appointmentsQuery.neq("id", data.excludeAppointmentId);
     }
 
-    const [slotsRes, blocksRes, apptsRes, servicesRes, schedulesRes, activeCrewRes, exceptionsRes] =
-      await Promise.all([
-        supabaseAdmin
-          .from("time_slots")
-          .select("id,start_time,end_time,capacity")
-          .eq("is_active", true)
-          .order("start_time"),
-        supabaseAdmin
-          .from("schedule_blocks")
-          .select("block_date,start_time,reason")
-          .eq("is_active", true)
-          .gte("block_date", configuredFrom)
-          .lte("block_date", configuredTo),
-        appointmentsQuery,
-        data.serviceIds.length > 0
-          ? supabaseAdmin
-              .from("services")
-              .select("id,duration_minutes")
-              .in("id", data.serviceIds)
-              .eq("is_active", true)
-              .eq("is_archived", false)
-          : { data: [] as { id: string; duration_minutes: number }[], error: null },
-        supabaseAdmin
-          .from("crew_schedules")
-          .select("*")
-          .gte("schedule_date", configuredFrom)
-          .lte("schedule_date", configuredTo),
-        supabaseAdmin
-          .from("crew_members")
-          .select("id")
-          .eq("is_active", true)
-          .eq("is_archived", false),
-        supabaseAdmin
-          .from("crew_availability_exceptions")
-          .select("*")
-          .gte("end_date", configuredFrom)
-          .lte("start_date", configuredTo),
-      ]);
+    const [
+      slotsRes,
+      blocksRes,
+      apptsRes,
+      servicesRes,
+      overridesRes,
+      schedulesRes,
+      activeCrewRes,
+      exceptionsRes,
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("time_slots")
+        .select("id,start_time,end_time,capacity")
+        .eq("is_active", true)
+        .order("start_time"),
+      supabaseAdmin
+        .from("schedule_blocks")
+        .select("block_date,start_time,reason")
+        .eq("is_active", true)
+        .gte("block_date", configuredFrom)
+        .lte("block_date", configuredTo),
+      appointmentsQuery,
+      data.serviceIds.length > 0
+        ? supabaseAdmin
+            .from("services")
+            .select("id,name,price,duration_minutes")
+            .in("id", data.serviceIds)
+            .eq("is_active", true)
+            .eq("is_archived", false)
+        : {
+            data: [] as {
+              id: string;
+              name: string;
+              price: number;
+              duration_minutes: number | null;
+            }[],
+            error: null,
+          },
+      data.serviceIds.length > 0
+        ? supabaseAdmin
+            .from("service_model_overrides")
+            .select("service_id,brand,model,duration_minutes,price")
+            .in("service_id", data.serviceIds)
+        : { data: [], error: null },
+      supabaseAdmin
+        .from("crew_schedules")
+        .select("*")
+        .gte("schedule_date", configuredFrom)
+        .lte("schedule_date", configuredTo),
+      supabaseAdmin
+        .from("crew_members")
+        .select("id")
+        .eq("is_active", true)
+        .eq("is_archived", false),
+      supabaseAdmin
+        .from("crew_availability_exceptions")
+        .select("*")
+        .gte("end_date", configuredFrom)
+        .lte("start_date", configuredTo),
+    ]);
 
     if (
       slotsRes.error ||
       blocksRes.error ||
       apptsRes.error ||
       servicesRes.error ||
+      overridesRes.error ||
       schedulesRes.error ||
       activeCrewRes.error ||
       exceptionsRes.error
@@ -350,6 +498,7 @@ export const getAvailability = createServerFn({ method: "GET" })
         blocksRes.error,
         apptsRes.error,
         servicesRes.error,
+        overridesRes.error,
         schedulesRes.error,
         activeCrewRes.error,
         exceptionsRes.error,
@@ -373,10 +522,49 @@ export const getAvailability = createServerFn({ method: "GET" })
       );
     }
 
+    let motorcycle: { brand: string; model: string } | undefined;
+    if (data.rescheduleReference && data.reschedulePhone) {
+      const original = await findAppointment(data.rescheduleReference, data.reschedulePhone);
+      if (!original) {
+        return unavailableAvailability(
+          configuredFrom,
+          configuredTo,
+          "We could not verify the original appointment. Please return to the Appointment Tracker and try again.",
+        );
+      }
+
+      motorcycle = { brand: original.moto_brand, model: original.moto_model };
+    }
+
+    if (!motorcycle && data.motorcycle) {
+      const motorcycleRecord = await supabaseAdmin
+        .from("products")
+        .select("engine_cc,fuel_type,transmission")
+        .eq("category", "motorcycle")
+        .eq("brand", data.motorcycle.brand)
+        .eq("name", data.motorcycle.model)
+        .eq("is_active", true)
+        .eq("is_archived", false)
+        .maybeSingle();
+      if (motorcycleRecord.error || !motorcycleRecord.data) {
+        return unavailableAvailability(
+          configuredFrom,
+          configuredTo,
+          "Select a valid motorcycle model from the Motorcycle Catalog.",
+        );
+      }
+      motorcycle = { ...data.motorcycle };
+    }
+
     // Reserve one 15-minute arrival buffer and one 15-minute post-service
     // buffer around the complete selected-service duration.
-    const totalDuration = (servicesRes.data ?? []).reduce(
-      (sum, service) => sum + (service.duration_minutes ?? 60),
+    const resolvedServices = resolveServicePricing(
+      servicesRes.data ?? [],
+      overridesRes.data ?? [],
+      motorcycle,
+    );
+    const totalDuration = resolvedServices.reduce(
+      (sum, service) => sum + service.durationMinutes,
       30,
     );
 
@@ -400,7 +588,7 @@ export const getAvailability = createServerFn({ method: "GET" })
       capacity: slot.capacity,
     }));
 
-    return buildPublicAvailability({
+    const publicAvailability = buildPublicAvailability({
       from: configuredFrom,
       to: configuredTo,
       minimumBookingLeadHours: data.rescheduling
@@ -423,6 +611,7 @@ export const getAvailability = createServerFn({ method: "GET" })
       ),
       exceptions: exceptionsRes.data ?? [],
     });
+    return { ...publicAvailability, serviceEstimates: resolvedServices };
   });
 
 export const createBooking = createServerFn({ method: "POST" })
@@ -463,8 +652,12 @@ export const createBooking = createServerFn({ method: "POST" })
       };
     }
 
-    let rescheduledFrom: { id: string; reference_code: string; total_estimate: number } | null =
-      null;
+    let rescheduledFrom: {
+      id: string;
+      reference_code: string;
+      total_estimate: number;
+      motorcycleConfiguration: MotorcycleConfiguration | null;
+    } | null = null;
     if (data.rescheduleReference) {
       const original = await findAppointment(data.rescheduleReference, data.phone);
       if (!original) {
@@ -553,6 +746,11 @@ export const createBooking = createServerFn({ method: "POST" })
         id: original.id,
         reference_code: original.reference_code,
         total_estimate: Number(original.total_estimate),
+        motorcycleConfiguration: catalogMotorcycleConfiguration({
+          engine_cc: original.moto_cc,
+          fuel_type: original.moto_fuel_type,
+          transmission: original.moto_transmission,
+        }),
       };
     }
 
@@ -645,7 +843,9 @@ export const createBooking = createServerFn({ method: "POST" })
     if (!slot || slot.capacity <= 0)
       return { ok: false as const, error: "That time slot is not available." };
 
-    // --- Fetch services to calculate the service duration and two booking buffers ---
+    // Resolve every selected service using its most-specific rule: exact model
+    // override, then exact CC/fuel/transmission configuration, then the
+    // service's default price and duration.
     const services = await supabaseAdmin
       .from("services")
       .select("id,name,price,duration_minutes")
@@ -658,6 +858,55 @@ export const createBooking = createServerFn({ method: "POST" })
       services.data.length !== data.serviceIds.length
     ) {
       return { ok: false as const, error: "Please select available services and try again." };
+    }
+
+    const overrides = await supabaseAdmin
+      .from("service_model_overrides")
+      .select("service_id,brand,model,duration_minutes,price")
+      .in("service_id", data.serviceIds);
+    if (overrides.error) {
+      console.error("[Booking] model override lookup failed", {
+        overrides: overrides.error.message,
+      });
+      return {
+        ok: false as const,
+        error: "We could not calculate the selected service details. Please try again.",
+      };
+    }
+
+    // Brand and model are the only customer-supplied motorcycle values. The
+    // catalog is the source of truth for CC, fuel type, and transmission.
+    let motorcycleConfiguration = rescheduledFrom?.motorcycleConfiguration ?? null;
+    if (!motorcycleConfiguration) {
+      const motorcycle = await supabaseAdmin
+        .from("products")
+        .select("engine_cc,fuel_type,transmission")
+        .eq("category", "motorcycle")
+        .eq("brand", data.motoBrand)
+        .eq("name", data.motoModel)
+        .eq("is_active", true)
+        .eq("is_archived", false)
+        .maybeSingle();
+      if (motorcycle.error) {
+        return {
+          ok: false as const,
+          error: "We could not verify that motorcycle model. Please try again.",
+        };
+      }
+      if (!motorcycle.data) {
+        return {
+          ok: false as const,
+          error: "Select a valid motorcycle model from the catalog.",
+        };
+      }
+      motorcycleConfiguration = catalogMotorcycleConfiguration(motorcycle.data);
+    }
+    if (!motorcycleConfiguration) {
+      return {
+        ok: false as const,
+        error:
+          "The selected motorcycle is missing its CC, fuel type, or transmission in the Motorcycle Catalog.",
+      };
     }
 
     // A customer may only hold one active booking for a service on a given date.
@@ -696,8 +945,13 @@ export const createBooking = createServerFn({ method: "POST" })
       };
     }
 
-    const totalDuration = services.data.reduce(
-      (sum, service) => sum + (service.duration_minutes ?? 60),
+    const resolvedServices = resolveServicePricing(services.data, overrides.data ?? [], {
+      brand: data.motoBrand,
+      model: data.motoModel,
+      ...motorcycleConfiguration,
+    });
+    const totalDuration = resolvedServices.reduce(
+      (sum, service) => sum + service.durationMinutes,
       30,
     );
 
@@ -858,7 +1112,7 @@ export const createBooking = createServerFn({ method: "POST" })
     //    appointments that have not yet been assigned to a crew member.
     const assignedMechanicId = availableMechanics[unassignedAppointments] ?? null;
 
-    const total = services.data.reduce((sum, s) => sum + Number(s.price), 0);
+    const total = resolvedServices.reduce((sum, service) => sum + service.price, 0);
 
     if (rescheduledFrom) {
       const request = await supabaseAdmin.rpc("submit_reschedule_request", {
@@ -921,6 +1175,9 @@ export const createBooking = createServerFn({ method: "POST" })
       p_email: data.email || null,
       p_moto_brand: data.motoBrand,
       p_moto_model: data.motoModel,
+      p_moto_cc: motorcycleConfiguration.cc,
+      p_moto_fuel_type: motorcycleConfiguration.fuelType,
+      p_moto_transmission: motorcycleConfiguration.transmission,
       p_moto_variant: data.motoVariant || null,
       p_moto_year: data.motoYear,
       p_plate_number: data.plateNumber.toUpperCase(),
@@ -930,16 +1187,16 @@ export const createBooking = createServerFn({ method: "POST" })
       p_total_estimate: total,
       p_booking_duration_minutes: totalDuration,
       p_assigned_crew_id: assignedMechanicId,
-      p_services: services.data.map((service) => ({
+      p_services: resolvedServices.map((service) => ({
         service_id: service.id,
         service_name: service.name,
         price: service.price,
-        duration_minutes: service.duration_minutes ?? 60,
+        duration_minutes: service.durationMinutes,
       })),
       p_notification_title: rescheduledFrom
         ? `Rescheduled appointment ${reference}`
         : `New booking ${reference}`,
-      p_notification_message: `${customerName} ${rescheduledFrom ? "rescheduled" : "booked"} ${services.data.map((service) => service.name).join(", ")} on ${data.date}.`,
+      p_notification_message: `${customerName} ${rescheduledFrom ? "rescheduled" : "booked"} ${resolvedServices.map((service) => service.name).join(", ")} on ${data.date}.`,
       p_first_name: data.firstName.trim(),
       p_middle_name: data.middleName.trim(),
       p_last_name: data.lastName.trim(),
@@ -1010,7 +1267,7 @@ async function findAppointment(reference: string, phone: string) {
   const res = await supabaseAdmin
     .from("appointments")
     .select(
-      "id,reference_code,customer_name,first_name,middle_name,last_name,phone,email,moto_brand,moto_model,moto_variant,moto_year,plate_number,appointment_date,start_time,status,notes,total_estimate,created_at,rescheduled_from_appointment_id,rescheduled_to_appointment_id,reschedule_count,last_reschedule_rejected_at,last_reschedule_rejection_message,pending_reschedule_request_id,pending_reschedule_date,pending_reschedule_start_time,pending_reschedule_reason,appointment_services(service_id,service_name,price)",
+      "id,reference_code,customer_name,first_name,middle_name,last_name,phone,email,moto_brand,moto_model,moto_cc,moto_fuel_type,moto_transmission,moto_variant,moto_year,plate_number,appointment_date,start_time,status,notes,total_estimate,created_at,rescheduled_from_appointment_id,rescheduled_to_appointment_id,reschedule_count,last_reschedule_rejected_at,last_reschedule_rejection_message,pending_reschedule_request_id,pending_reschedule_date,pending_reschedule_start_time,pending_reschedule_reason,appointment_services(service_id,service_name,price)",
     )
     .eq("reference_code", normalizeReferenceCode(reference))
     .maybeSingle();
