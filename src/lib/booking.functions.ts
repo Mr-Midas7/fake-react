@@ -15,6 +15,7 @@ import {
   isShopOpenDate,
   isSlotBookable,
   manilaNow,
+  normalizePhilippineMobile,
   phoneSchema,
   REFERENCE_CODE_PATTERN,
   normalizeReferenceCode,
@@ -217,35 +218,45 @@ const namePartSchema = z
   .max(40)
   .regex(/^(?:[A-Za-z]+(?: [A-Za-z]+)*)?$/, "Names may contain letters and spaces only.");
 
-const bookingSchema = z.object({
-  firstName: namePartSchema.default(""),
-  middleName: namePartSchema.default(""),
-  lastName: namePartSchema.default(""),
-  phone: phoneSchema,
-  email: z.string().trim().email().max(120).optional().or(z.literal("")),
-  motoBrand: z.string().trim().min(1).max(50),
-  motoModel: z.string().trim().min(1).max(50),
-  motoVariant: z.string().trim().max(50).optional().or(z.literal("")),
-  motoYear: z.number().int().min(1970).max(currentYear),
-  plateNumber: z.string().trim().min(2).max(20),
-  serviceIds: z
-    .array(z.string().uuid())
-    .min(1)
-    .max(6)
-    .refine((ids) => new Set(ids).size === ids.length, "Services must be unique"),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  startTime: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
-  notes: z.string().trim().max(500).optional().or(z.literal("")),
-  turnstileToken: z.string().trim().max(2048).default(""),
-  idempotencyKey: z.string().uuid(),
-  termsAccepted: z.literal(true),
-  rescheduleReference: z
-    .string()
-    .trim()
-    .regex(REFERENCE_CODE_PATTERN, "Enter a valid original appointment reference.")
-    .optional(),
-  rescheduleReason: z.string().trim().max(500).optional().or(z.literal("")),
-});
+const bookingSchema = z
+  .object({
+    firstName: namePartSchema.default(""),
+    middleName: namePartSchema.default(""),
+    lastName: namePartSchema.default(""),
+    phone: phoneSchema,
+    email: z.string().trim().email().max(120).optional().or(z.literal("")),
+    motoBrand: z.string().trim().min(1).max(50),
+    motoModel: z.string().trim().min(1).max(50),
+    motoVariant: z.string().trim().max(50).optional().or(z.literal("")),
+    motoYear: z.number().int().min(1970).max(currentYear),
+    plateNumber: z.string().trim().min(2).max(20),
+    serviceIds: z
+      .array(z.string().uuid())
+      .min(1)
+      .max(6)
+      .refine((ids) => new Set(ids).size === ids.length, "Services must be unique"),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    startTime: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
+    notes: z.string().trim().max(500).optional().or(z.literal("")),
+    turnstileToken: z.string().trim().max(2048).default(""),
+    idempotencyKey: z.string().uuid(),
+    termsAccepted: z.literal(true),
+    rescheduleReference: z
+      .string()
+      .trim()
+      .regex(REFERENCE_CODE_PATTERN, "Enter a valid original appointment reference.")
+      .optional(),
+    rescheduleReason: z.string().trim().max(500).optional().or(z.literal("")),
+  })
+  .superRefine((data, context) => {
+    if (data.rescheduleReference && !data.rescheduleReason?.trim()) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rescheduleReason"],
+        message: "A reason for rescheduling is required.",
+      });
+    }
+  });
 
 export type BookingInput = z.infer<typeof bookingSchema>;
 
@@ -685,17 +696,37 @@ export const createBooking = createServerFn({ method: "POST" })
         };
       }
       if (original.pending_reschedule_request_id) {
-        if (original.pending_reschedule_request_id === data.idempotencyKey) {
+        // The first request may have reached the database but lost its response.
+        // Always return its reserved code, even if a browser retry has a new key.
+        if (original.pending_reschedule_reference_code) {
           return {
             ok: true as const,
-            reference: original.reference_code,
+            reference: original.pending_reschedule_reference_code,
             total: Number(original.total_estimate),
             rescheduleRequested: true as const,
           };
         }
-        return {
-          ok: false as const,
-          error: "A reschedule request for this appointment is already awaiting review.",
+
+        // Recover a legacy request created before references were reserved at
+        // submission. Reuse the server-stored request and schedule details so
+        // the new RPC can reserve its missing linked-booking reference safely.
+        if (
+          !original.pending_reschedule_date ||
+          !original.pending_reschedule_start_time ||
+          !original.pending_reschedule_reason
+        ) {
+          return {
+            ok: false as const,
+            error:
+              "A reschedule request is awaiting review. Please contact the shop to complete it.",
+          };
+        }
+        data = {
+          ...data,
+          idempotencyKey: original.pending_reschedule_request_id,
+          date: original.pending_reschedule_date,
+          startTime: String(original.pending_reschedule_start_time).slice(0, 5),
+          rescheduleReason: original.pending_reschedule_reason,
         };
       }
       if (
@@ -1148,9 +1179,22 @@ export const createBooking = createServerFn({ method: "POST" })
         };
       }
 
+      const reservedReference = await supabaseAdmin
+        .from("appointments")
+        .select("pending_reschedule_reference_code")
+        .eq("id", rescheduledFrom.id)
+        .maybeSingle();
+      if (reservedReference.error || !reservedReference.data?.pending_reschedule_reference_code) {
+        return {
+          ok: false as const,
+          error:
+            "Your reschedule request was saved, but we could not prepare its new reference. Please try again.",
+        };
+      }
+
       return {
         ok: true as const,
-        reference: rescheduledFrom.reference_code,
+        reference: reservedReference.data.pending_reschedule_reference_code,
         total: rescheduledFrom.total_estimate,
         rescheduleRequested: true as const,
       };
@@ -1161,7 +1205,7 @@ export const createBooking = createServerFn({ method: "POST" })
       const existing = await supabaseAdmin
         .from("appointments")
         .select("id")
-        .eq("reference_code", reference)
+        .or(`reference_code.eq.${reference},pending_reschedule_reference_code.eq.${reference}`)
         .maybeSingle();
       if (!existing.data) break;
       reference = makeReference();
@@ -1264,15 +1308,44 @@ const lookupSchema = z.object({
 
 async function findAppointment(reference: string, phone: string) {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const res = await supabaseAdmin
+  const primaryLookup = await supabaseAdmin
     .from("appointments")
     .select(
-      "id,reference_code,customer_name,first_name,middle_name,last_name,phone,email,moto_brand,moto_model,moto_cc,moto_fuel_type,moto_transmission,moto_variant,moto_year,plate_number,appointment_date,start_time,status,notes,total_estimate,created_at,rescheduled_from_appointment_id,rescheduled_to_appointment_id,reschedule_count,last_reschedule_rejected_at,last_reschedule_rejection_message,pending_reschedule_request_id,pending_reschedule_date,pending_reschedule_start_time,pending_reschedule_reason,appointment_services(service_id,service_name,price)",
+      "id,reference_code,customer_name,first_name,middle_name,last_name,phone,email,moto_brand,moto_model,moto_cc,moto_fuel_type,moto_transmission,moto_variant,moto_year,plate_number,appointment_date,start_time,status,notes,total_estimate,created_at,rescheduled_from_appointment_id,rescheduled_to_appointment_id,reschedule_count,last_reschedule_rejected_at,last_reschedule_rejection_message,pending_reschedule_request_id,pending_reschedule_date,pending_reschedule_start_time,pending_reschedule_reference_code,pending_reschedule_reason,appointment_services(service_id,service_name,price)",
     )
-    .eq("reference_code", normalizeReferenceCode(reference))
+    // Legacy records may have been written with lower-case reference codes.
+    // Input is validated before this query, so it cannot introduce LIKE wildcards.
+    .ilike("reference_code", normalizeReferenceCode(reference))
     .maybeSingle();
-  if (!res.data || res.data.phone !== phone) return null;
-  return res.data;
+
+  // Keep the appointment tracker usable during a rolling deployment: the
+  // linked-booking column is introduced by the reschedule migration and may
+  // not be present in the database while the application code is already live.
+  const requiresLegacyLookup =
+    primaryLookup.error &&
+    ["42703", "PGRST204"].includes(primaryLookup.error.code) &&
+    primaryLookup.error.message.includes("pending_reschedule_reference_code");
+  const legacyLookup = requiresLegacyLookup
+    ? await supabaseAdmin
+        .from("appointments")
+        .select(
+          "id,reference_code,customer_name,first_name,middle_name,last_name,phone,email,moto_brand,moto_model,moto_cc,moto_fuel_type,moto_transmission,moto_variant,moto_year,plate_number,appointment_date,start_time,status,notes,total_estimate,created_at,rescheduled_from_appointment_id,rescheduled_to_appointment_id,reschedule_count,last_reschedule_rejected_at,last_reschedule_rejection_message,pending_reschedule_request_id,pending_reschedule_date,pending_reschedule_start_time,pending_reschedule_reason,appointment_services(service_id,service_name,price)",
+        )
+        .ilike("reference_code", normalizeReferenceCode(reference))
+        .maybeSingle()
+    : null;
+  const appointment = legacyLookup?.data
+    ? { ...legacyLookup.data, pending_reschedule_reference_code: null }
+    : primaryLookup.data;
+  if (!appointment) return null;
+
+  // Public input is normalized to E.164 by `lookupSchema`. Normalize the
+  // stored value too so appointments created before phone normalization (for
+  // example `0917…` or `+63 917…`) remain available to their owner.
+  const storedPhone = normalizePhilippineMobile(appointment.phone);
+  if (storedPhone !== phone) return null;
+
+  return appointment;
 }
 
 export const getRescheduleDetails = createServerFn({ method: "POST" })
@@ -1436,6 +1509,8 @@ export const lookupAppointment = createServerFn({ method: "POST" })
         requestedRescheduleStartTime: appt.pending_reschedule_start_time
           ? String(appt.pending_reschedule_start_time).slice(0, 5)
           : null,
+        requestedRescheduleReference: appt.pending_reschedule_reference_code,
+        requestedRescheduleReason: appt.pending_reschedule_reason,
         rescheduledFromReference: appt.rescheduled_from_appointment_id
           ? (linkedReferences.get(appt.rescheduled_from_appointment_id) ?? null)
           : null,

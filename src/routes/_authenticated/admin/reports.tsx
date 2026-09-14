@@ -12,9 +12,6 @@ import {
   Filter,
   ListFilter,
   RotateCcw,
-  TrendingDown,
-  TrendingUp,
-  Wrench,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { DateRange } from "react-day-picker";
@@ -69,7 +66,15 @@ import {
   SHOP_EXPORT_NAME,
   SHOP_OWNER_NAME,
 } from "@/lib/export-branding";
-import { addDays, formatDateLong, formatPHP, manilaNow, statusLabel, statusTone } from "@/lib/shop";
+import {
+  SHOP,
+  addDays,
+  formatDateLong,
+  formatPHP,
+  manilaNow,
+  statusLabel,
+  statusTone,
+} from "@/lib/shop";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/admin/reports")({
@@ -136,13 +141,19 @@ type ReportMetrics = {
   status_counts: Record<string, number>;
 };
 type ReportPage = { rows: Array<BookingRow | ServiceRow>; total: number; metrics: ReportMetrics };
-type ExportData = { headers: string[]; rows: string[][]; summary: string[] };
-type Trend = {
-  direction: "up" | "down" | "flat";
+type ExportCardTone = "primary" | "success" | "accent" | "chart";
+type ExportSummaryCard = {
   label: string;
-  description: string;
+  value: string;
+  detail: string;
+  tone: ExportCardTone;
 };
-
+type ExportData = {
+  headers: string[];
+  rows: string[][];
+  cards: ExportSummaryCard[];
+  totalAmount: number;
+};
 function ReportsPage() {
   const pageSize = 10;
   const today = manilaNow().date;
@@ -153,7 +164,6 @@ function ReportsPage() {
   const [pendingExport, setPendingExport] = useState<ExportType | null>(null);
   const reportKind: ReportKind = "bookings";
   const { from, to, status, category, serviceName } = filters;
-  const previousRange = useMemo(() => previousPeriodRange(from, to), [from, to]);
   const customDateError =
     draftFilters.periodPreset === "custom" && (!draftFilters.from || !draftFilters.to)
       ? "Select both a start and end date."
@@ -189,21 +199,6 @@ function ReportsPage() {
       }),
   });
 
-  const comparison = useQuery({
-    queryKey: ["reports-comparison", { reportKind, previousRange, status, category, serviceName }],
-    queryFn: () =>
-      getReportPage({
-        reportKind,
-        from: previousRange.from,
-        to: previousRange.to,
-        status,
-        category,
-        serviceName,
-        limit: 1,
-        offset: 0,
-      }),
-  });
-
   const categories = useMemo(
     () =>
       Array.from(new Set((catalog.data ?? []).map((item) => item.category).filter(Boolean))).sort(),
@@ -219,36 +214,38 @@ function ReportsPage() {
     [catalog.data, draftFilters.category],
   );
   const metrics = data.data?.metrics;
-  const comparisonMetrics = comparison.data?.metrics;
   const byStatus = Object.entries(metrics?.status_counts ?? {}).sort(([first], [second]) =>
     first.localeCompare(second),
   );
-  const statusTotal = Math.max(
-    1,
-    byStatus.reduce((total, [, count]) => total + count, 0),
-  );
-  const comparisonStatusGroups = comparisonMetrics
-    ? Object.keys(comparisonMetrics.status_counts ?? {}).length
-    : undefined;
   const preview = makeExportData(reportKind, data.data?.rows ?? [], metrics);
   const reportTitle =
     reportKind === "bookings"
-      ? "Booking Volume Report"
+      ? "Booking Report"
       : `${serviceName !== "all" ? serviceName : category !== "all" ? category : "All Services"} Activity Report`;
-  const reportScope = [
-    `${formatDateLong(from)} to ${formatDateLong(to)}`,
-    status === "all" ? "All booking statuses" : statusLabel(status),
-    category === "all" ? "All categories" : category,
-    serviceName === "all" ? null : serviceName,
-  ]
-    .filter(Boolean)
+  const appliedFilters = [
+    { label: "Reporting period", value: formatDateRange(from, to) },
+    { label: "Service category", value: category === "all" ? "All categories" : category },
+    { label: "Specific service", value: serviceName === "all" ? "All services" : serviceName },
+    { label: "Booking status", value: status === "all" ? "All statuses" : statusLabel(status) },
+  ];
+  const reportScope = appliedFilters
+    .slice(1)
+    .map((filter) => `${filter.label}: ${filter.value}`)
     .join(" · ");
 
   function updatePeriod(value: PeriodPreset) {
     setDraftFilters((current) => {
       if (value === "custom") return { ...current, periodPreset: value };
       const range = periodRange(value, today);
-      return { ...current, periodPreset: value, ...range };
+      return {
+        ...current,
+        periodPreset: value,
+        ...range,
+        // Month and year presets start as overall booking reports and must
+        // not inherit a previous status selection. Admins can subsequently
+        // select a status, category, or service to narrow the report scope.
+        ...(value === "this_month" || value === "this_year" ? { status: "all" } : {}),
+      };
     });
   }
 
@@ -425,198 +422,163 @@ function ReportsPage() {
               </Button>
             </div>
           </div>
-        </CardContent>
-      </Card>
-
-      <Card className="mb-5 border-border/70 bg-card/60">
-        <CardContent className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
-          <span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary">
-            <CalendarDays className="size-4" aria-hidden="true" />
-          </span>
-          <div className="min-w-0">
-            <h2 className="font-display text-sm tracking-wide uppercase">{reportTitle}</h2>
-            <p className="truncate text-sm text-muted-foreground">{formatDateRange(from, to)}</p>
+          <div className="mt-4 border-t border-border pt-3" aria-live="polite">
+            <p className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+              Applied report scope
+            </p>
+            <dl className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              {appliedFilters.map((filter) => (
+                <div
+                  key={filter.label}
+                  className="min-w-0 rounded-md border border-border/70 bg-muted/30 px-3 py-2"
+                >
+                  <dt className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+                    {filter.label}
+                  </dt>
+                  <dd className="mt-0.5 truncate text-sm font-medium text-foreground">
+                    {filter.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
           </div>
         </CardContent>
       </Card>
 
-      {reportKind === "bookings" ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat
-            label="Total bookings"
-            value={String(metrics?.total_bookings ?? 0)}
-            icon={CalendarDays}
-            iconClassName="bg-chart-4/15 text-chart-4"
-            trend={makeTrend(metrics?.total_bookings, comparisonMetrics?.total_bookings)}
-          />
-          <Stat
-            label="Completed jobs"
-            value={String(metrics?.completed_bookings ?? 0)}
-            icon={CheckCircle2}
-            iconClassName="bg-emerald-500/15 text-emerald-400"
-            trend={makeTrend(metrics?.completed_bookings, comparisonMetrics?.completed_bookings)}
-          />
-          <Stat
-            label="Completed revenue"
-            value={formatPHP(metrics?.completed_value ?? 0)}
-            icon={CircleDollarSign}
-            iconClassName="bg-accent/15 text-accent"
-            trend={makeTrend(metrics?.completed_value, comparisonMetrics?.completed_value)}
-          />
-          <Stat
-            label="Status groups"
-            value={String(byStatus.length)}
-            icon={BarChart3}
-            iconClassName="bg-chart-4/15 text-chart-4"
-            trend={makeTrend(byStatus.length, comparisonStatusGroups)}
-          />
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat
-            label="Service entries"
-            value={String(data.data?.total ?? 0)}
-            icon={Wrench}
-            trend={makeTrend(data.data?.total, comparison.data?.total)}
-          />
-          <Stat
-            label="Bookings served"
-            value={String(metrics?.total_bookings ?? 0)}
-            icon={CalendarDays}
-            iconClassName="bg-chart-4/15 text-chart-4"
-            trend={makeTrend(metrics?.total_bookings, comparisonMetrics?.total_bookings)}
-          />
-          <Stat
-            label="Completed entries"
-            value={String(metrics?.completed_rows ?? 0)}
-            icon={CheckCircle2}
-            iconClassName="bg-emerald-500/15 text-emerald-400"
-            trend={makeTrend(metrics?.completed_rows, comparisonMetrics?.completed_rows)}
-          />
-          <Stat
-            label="Completed service value"
-            value={formatPHP(metrics?.completed_value ?? 0)}
-            icon={CircleDollarSign}
-            iconClassName="bg-accent/15 text-accent"
-            trend={makeTrend(metrics?.completed_value, comparisonMetrics?.completed_value)}
-          />
-        </div>
-      )}
-
-      <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(16rem,.82fr)_minmax(0,1.9fr)]">
-        <Card className="border-border/70 bg-card/60">
-          <CardContent className="p-5">
+      <section aria-labelledby="report-summary-heading" className="mb-6">
+        <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+          <div>
             <div className="flex items-center gap-2">
               <BarChart3 className="size-4 text-primary" aria-hidden="true" />
-              <h2 className="font-display text-sm tracking-wide uppercase">Status breakdown</h2>
+              <h2
+                id="report-summary-heading"
+                className="font-display text-base tracking-wide uppercase"
+              >
+                Report summary
+              </h2>
             </div>
-            {byStatus.length === 0 ? (
-              <p className="mt-4 text-sm text-muted-foreground">
-                Nothing to report for this selection.
-              </p>
-            ) : (
-              <ul className="mt-5 space-y-4 text-sm">
-                {byStatus.map(([item, count]) => (
-                  <li key={item}>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span
-                          className={cn("size-2.5 shrink-0 rounded-full", statusBarTone(item))}
-                          aria-hidden="true"
-                        />
-                        <span className="truncate">{statusLabel(item)}</span>
-                      </span>
-                      <span className="font-medium">{count}</span>
-                    </div>
-                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-                      <div
-                        className={cn("h-full rounded-full", statusBarTone(item))}
-                        style={{
-                          width: `${Math.max(6, Math.round((count / statusTotal) * 100))}%`,
-                        }}
-                      />
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-        <Card className="border-border/70 bg-card/60">
-          <CardContent className="overflow-x-auto p-0">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
-              <div className="flex items-center gap-2">
-                <ListFilter className="size-4 text-primary" aria-hidden="true" />
-                <h2 className="font-display text-sm tracking-wide uppercase">Recent bookings</h2>
+            <p className="mt-1 text-xs text-muted-foreground">{reportScope}</p>
+          </div>
+          <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-right">
+            <p className="text-[10px] font-semibold tracking-wider text-primary uppercase">
+              Reporting period
+            </p>
+            <p className="font-display text-sm tracking-wide uppercase">
+              {formatDateRange(from, to)}
+            </p>
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Stat
+            label="Total Bookings"
+            value={String(metrics?.total_bookings ?? 0)}
+            detail="All bookings in selected period"
+            icon={CalendarDays}
+            iconClassName="bg-chart-4/15 text-chart-4"
+          />
+          <Stat
+            label="Completed Jobs"
+            value={String(metrics?.completed_bookings ?? 0)}
+            detail={'Bookings with status "Completed"'}
+            icon={CheckCircle2}
+            iconClassName="bg-emerald-500/15 text-emerald-400"
+          />
+          <Stat
+            label="Revenue (Completed Jobs)"
+            value={formatPHP(metrics?.completed_value ?? 0)}
+            detail="Total amount from completed jobs"
+            icon={CircleDollarSign}
+            iconClassName="bg-accent/15 text-accent"
+          />
+          <Stat
+            label="Status Groups"
+            value={String(byStatus.length)}
+            detail="Different booking statuses in scope"
+            icon={BarChart3}
+            iconClassName="bg-chart-4/15 text-chart-4"
+          />
+        </div>
+      </section>
+
+      <Card className="border-border/70 bg-card/60">
+        <CardContent className="overflow-x-auto p-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-4 sm:px-5">
+            <div className="flex items-center gap-2">
+              <ListFilter className="size-4 text-primary" aria-hidden="true" />
+              <div>
+                <h2 className="font-display text-base tracking-wide uppercase">
+                  Bookings for Selected Period
+                </h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">{reportScope}</p>
               </div>
-              <span className="text-xs text-muted-foreground">
-                Page {data.data?.total ? page + 1 : 0} of{" "}
-                {Math.max(1, Math.ceil((data.data?.total ?? 0) / pageSize))}
-              </span>
             </div>
-            <Table className="admin-data-table">
-              <TableHeader>
-                <TableRow>
-                  {preview.headers.map((header) => (
-                    <TableHead key={header}>{header}</TableHead>
+            <span className="text-xs text-muted-foreground">
+              Page {data.data?.total ? page + 1 : 0} of{" "}
+              {Math.max(1, Math.ceil((data.data?.total ?? 0) / pageSize))}
+            </span>
+          </div>
+          <Table className="admin-data-table">
+            <TableHeader>
+              <TableRow>
+                {preview.headers.map((header) => (
+                  <TableHead key={header}>{header}</TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {preview.rows.map((row, index) => (
+                <TableRow key={`${row[0]}-${index}`}>
+                  {row.map((cell, cellIndex) => (
+                    <TableCell
+                      key={`${cellIndex}-${cell}`}
+                      data-label={preview.headers[cellIndex]}
+                      className="text-sm"
+                    >
+                      {preview.headers[cellIndex] === "Status" ? (
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "text-[10px] uppercase",
+                            statusTone(data.data?.rows[index]?.status ?? ""),
+                          )}
+                        >
+                          {cell}
+                        </Badge>
+                      ) : (
+                        cell
+                      )}
+                    </TableCell>
                   ))}
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {preview.rows.map((row, index) => (
-                  <TableRow key={`${row[0]}-${index}`}>
-                    {row.map((cell, cellIndex) => (
-                      <TableCell
-                        key={`${cellIndex}-${cell}`}
-                        data-label={preview.headers[cellIndex]}
-                        className="text-sm"
-                      >
-                        {preview.headers[cellIndex] === "Status" ? (
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "text-[10px] uppercase",
-                              statusTone(data.data?.rows[index]?.status ?? ""),
-                            )}
-                          >
-                            {cell}
-                          </Badge>
-                        ) : (
-                          cell
-                        )}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-                {!data.isLoading && preview.rows.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={preview.headers.length}
-                      className="py-10 text-center text-sm text-muted-foreground"
-                    >
-                      No {rowLabel} match this report selection.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-            {data.isLoading && (
-              <p className="p-8 text-center text-sm text-muted-foreground">Loading report…</p>
-            )}
-            {data.isError && (
-              <p className="p-8 text-center text-sm text-destructive">
-                Could not load this report. Please try again.
-              </p>
-            )}
-            <PaginationControls
-              page={page}
-              pageSize={pageSize}
-              total={data.data?.total ?? 0}
-              onPageChange={setPage}
-            />
-          </CardContent>
-        </Card>
-      </div>
+              ))}
+              {!data.isLoading && preview.rows.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={preview.headers.length}
+                    className="py-10 text-center text-sm text-muted-foreground"
+                  >
+                    No {rowLabel} match this report selection.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+          {data.isLoading && (
+            <p className="p-8 text-center text-sm text-muted-foreground">Loading report…</p>
+          )}
+          {data.isError && (
+            <p className="p-8 text-center text-sm text-destructive">
+              Could not load this report. Please try again.
+            </p>
+          )}
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            total={data.data?.total ?? 0}
+            onPageChange={setPage}
+          />
+        </CardContent>
+      </Card>
 
       <AlertDialog
         open={pendingExport !== null}
@@ -637,6 +599,7 @@ function ReportsPage() {
             format={pendingExport}
             reportKind={reportKind}
             title={reportTitle}
+            period={formatDateRange(from, to)}
             scope={reportScope}
             data={preview}
           />
@@ -656,12 +619,14 @@ function ExportFormatPreview({
   format,
   reportKind,
   title,
+  period,
   scope,
   data,
 }: {
   format: ExportType | null;
   reportKind: ReportKind;
   title: string;
+  period: string;
   scope: string;
   data: ExportData;
 }) {
@@ -686,56 +651,64 @@ function ExportFormatPreview({
         </span>
       </div>
 
-      {isDocx ? (
-        <div className="rounded-md border border-border bg-zinc-200/75 p-3 sm:p-4">
-          <div className="mx-auto aspect-[210/297] max-h-80 w-full max-w-56 overflow-hidden bg-white px-4 py-5 font-serif text-zinc-950 shadow-md">
-            <p className="text-center text-[7px] font-bold tracking-wide">{SHOP_EXPORT_NAME}</p>
-            <p className="mt-1 text-center text-[6px] font-bold uppercase">{title}</p>
-            <p className="mt-1 text-center text-[5px]">Generated: {formatBusinessTimestamp()}</p>
-            <p className="mt-3 text-[5px] leading-relaxed">Scope: {scope}</p>
-            <div className="mt-2 space-y-0.5 text-[5px] leading-relaxed">
-              {data.summary.map((item) => (
-                <p key={item}>{item}</p>
-              ))}
+      <div className="rounded-md border border-border bg-muted/60 p-3 sm:p-4">
+        <div className="mx-auto aspect-[297/210] w-full max-w-2xl overflow-hidden bg-background px-3 py-2 font-sans text-foreground shadow-md sm:px-4 sm:py-3">
+          <div className="flex items-center justify-between gap-3 rounded-md bg-foreground px-3 py-2 text-background">
+            <div className="flex min-w-0 items-center gap-2">
+              <img src={exportLogoUrl} alt="" className="h-10 w-[4.5rem] shrink-0 object-contain" />
+              <div className="min-w-0">
+                <p className="truncate text-[8px] font-bold tracking-wide">{SHOP_EXPORT_NAME}</p>
+                <p className="truncate text-[5px] opacity-80">{SHOP.tagline}</p>
+              </div>
             </div>
-            <ExportDocumentTable data={data} rows={previewRows} variant="docx" />
-            <div className="mt-3 text-right text-[5px] leading-relaxed">
-              <p className="font-bold">{SHOP_OWNER_NAME}</p>
-              <p>Shop Owner</p>
+            <div className="shrink-0 text-right">
+              <p className="text-[7px] font-bold uppercase">{title}</p>
+              <p className="mt-0.5 text-[5px] opacity-80">Generated {formatBusinessTimestamp()}</p>
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="rounded-md border border-border bg-zinc-200/75 p-3 sm:p-4">
-          <div
-            className={cn(
-              "relative mx-auto overflow-hidden bg-white px-4 py-3 font-sans text-zinc-950 shadow-md",
-              reportKind === "services"
-                ? "aspect-[297/210] w-full"
-                : "aspect-[210/297] max-h-80 w-full max-w-56",
-            )}
-          >
-            <div className="flex items-center justify-center gap-1.5">
-              <img src={exportLogoUrl} alt="" className="size-5 object-contain" />
-              <p className="text-[7px] font-bold">{SHOP_EXPORT_NAME}</p>
-            </div>
-            <p className="mt-3 text-[6px] font-bold uppercase">{title}</p>
-            <p className="mt-1 text-[5px]">Generated: {formatBusinessTimestamp()}</p>
-            <p className="mt-1 text-[5px] leading-relaxed">Scope: {scope}</p>
-            <div className="mt-2 space-y-0.5 text-[5px]">
-              {data.summary.map((item) => (
-                <p key={item}>{item}</p>
-              ))}
-            </div>
-            <ExportDocumentTable data={data} rows={previewRows} variant="pdf" />
-            <div className="absolute right-4 bottom-3 w-20 text-center text-[5px]">
-              <div className="border-t border-zinc-700 pt-0.5 font-bold">{SHOP_OWNER_NAME}</div>
-              <p>Shop Owner</p>
-              <p>Signature over printed name</p>
-            </div>
+          <div className="mt-2 rounded border border-border bg-muted/40 px-2 py-1">
+            <p className="text-[5px] font-bold tracking-wider text-primary uppercase">
+              Report period
+            </p>
+            <p className="text-[7px] font-semibold">{period}</p>
+            <p className="text-[4px] leading-tight text-muted-foreground">Filters: {scope}</p>
+          </div>
+          <p className="mt-2 flex items-center gap-2 text-[6px] font-bold tracking-wide uppercase">
+            <span className="h-px flex-1 bg-primary/60" />
+            <span>Report summary</span>
+            <span className="h-px flex-1 bg-primary/60" />
+          </p>
+          <div className="mt-1 grid grid-cols-4 gap-1">
+            {data.cards.map((card) => (
+              <div
+                key={card.label}
+                className="min-w-0 rounded border border-border bg-card px-1.5 py-1"
+              >
+                <p className="truncate text-[4px] font-bold tracking-wide text-muted-foreground uppercase">
+                  {card.label}
+                </p>
+                <p className="truncate text-[8px] font-bold text-primary">{card.value}</p>
+                <p className="truncate text-[4px] text-muted-foreground">{card.detail}</p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 flex items-center gap-2 text-[6px] font-bold tracking-wide uppercase">
+            <span className="h-px flex-1 bg-primary/60" />
+            <span>
+              {reportKind === "services" ? "Service entries" : "Bookings for selected period"}
+            </span>
+            <span className="h-px flex-1 bg-primary/60" />
+          </p>
+          <ExportDocumentTable data={data} rows={previewRows} variant={isDocx ? "docx" : "pdf"} />
+          <div className="mt-5 flex justify-between gap-4 text-[4px] text-muted-foreground">
+            <span>Prepared By: ____________________</span>
+            <span className="text-right">
+              Approved By: <strong className="text-foreground">{SHOP_OWNER_NAME}</strong> · Shop
+              Owner
+            </span>
           </div>
         </div>
-      )}
+      </div>
       <p className="mt-2 text-xs text-muted-foreground">
         This preview mirrors the actual {isDocx ? "Word document" : "PDF"} layout. The exported file
         includes the complete table.
@@ -754,18 +727,13 @@ function ExportDocumentTable({
   variant: "pdf" | "docx";
 }) {
   return (
-    <table
-      className={cn(
-        "mt-2 w-full table-fixed border-collapse text-[4px] leading-tight",
-        variant === "docx" ? "border border-zinc-700" : "border border-zinc-500",
-      )}
-    >
-      <thead className={variant === "pdf" ? "bg-zinc-200" : "bg-white"}>
+    <table className="mt-2 w-full table-fixed border-collapse text-[4px] leading-tight">
+      <thead className="bg-foreground text-background">
         <tr>
           {data.headers.map((header) => (
             <th
               key={header}
-              className="truncate border border-zinc-500 px-0.5 py-0.5 text-left font-bold"
+              className="truncate border border-border px-0.5 py-0.5 text-left font-bold"
             >
               {header}
             </th>
@@ -778,7 +746,7 @@ function ExportDocumentTable({
             {row.map((cell, cellIndex) => (
               <td
                 key={`${cell}-${cellIndex}`}
-                className="truncate border border-zinc-500 px-0.5 py-0.5"
+                className="truncate border border-border px-0.5 py-0.5"
               >
                 {cell}
               </td>
@@ -1041,21 +1009,38 @@ function makeExportData(
         row.category,
         `PHP ${Number(row.price).toFixed(2)}`,
       ]),
-      summary: [
-        `Service entries: ${serviceRows.length}`,
-        `Bookings served: ${metrics?.total_bookings ?? 0}`,
-        `Completed service entries: ${metrics?.completed_rows ?? 0}`,
-        `Completed service value: PHP ${Number(metrics?.completed_value ?? 0).toFixed(2)}`,
+      cards: [
+        {
+          label: "Service entries",
+          value: String(serviceRows.length),
+          detail: "Entries in selected period",
+          tone: "primary",
+        },
+        {
+          label: "Bookings served",
+          value: String(metrics?.total_bookings ?? 0),
+          detail: "Bookings represented",
+          tone: "chart",
+        },
+        {
+          label: "Completed entries",
+          value: String(metrics?.completed_rows ?? 0),
+          detail: "Jobs with status Completed",
+          tone: "success",
+        },
+        {
+          label: "Completed value",
+          value: formatPHP(metrics?.completed_value ?? 0),
+          detail: "Value from completed jobs",
+          tone: "accent",
+        },
       ],
+      totalAmount: Number(metrics?.completed_value ?? 0),
     };
   }
   const bookingRows = rows as BookingRow[];
-  const statusText =
-    Object.entries(metrics?.status_counts ?? {})
-      .map(([name, count]) => `${statusLabel(name)} ${count}`)
-      .join(", ") || "None";
   return {
-    headers: ["Reference", "Customer", "Date", "Service", "Status", "Estimate"],
+    headers: ["Reference", "Customer", "Date", "Service", "Status", "Amount"],
     rows: bookingRows.map((row) => [
       row.reference_code,
       row.customer_name,
@@ -1064,12 +1049,33 @@ function makeExportData(
       statusLabel(row.status),
       `PHP ${Number(row.total_estimate).toFixed(2)}`,
     ]),
-    summary: [
-      `Total bookings: ${metrics?.total_bookings ?? 0}`,
-      `Completed jobs: ${metrics?.completed_bookings ?? 0}`,
-      `Completed revenue: PHP ${Number(metrics?.completed_value ?? 0).toFixed(2)}`,
-      `Statuses: ${statusText}`,
+    cards: [
+      {
+        label: "Total bookings",
+        value: String(metrics?.total_bookings ?? 0),
+        detail: "All bookings in selected period",
+        tone: "primary",
+      },
+      {
+        label: "Completed jobs",
+        value: String(metrics?.completed_bookings ?? 0),
+        detail: 'Jobs with status "Completed"',
+        tone: "success",
+      },
+      {
+        label: "Revenue (completed jobs)",
+        value: formatPHP(metrics?.completed_value ?? 0),
+        detail: "Total amount from completed jobs",
+        tone: "accent",
+      },
+      {
+        label: "Status groups",
+        value: String(Object.keys(metrics?.status_counts ?? {}).length),
+        detail: "Different booking status groups",
+        tone: "chart",
+      },
     ],
+    totalAmount: Number(metrics?.completed_value ?? 0),
   };
 }
 
@@ -1105,43 +1111,19 @@ function periodRange(preset: Exclude<PeriodPreset, "custom">, today: string) {
   if (preset === "today") return { from: today, to: today };
   if (preset === "this_week") {
     const day = new Date(`${today}T00:00:00`).getDay();
-    return { from: addDays(today, -((day + 6) % 7)), to: today };
+    const from = addDays(today, -((day + 6) % 7));
+    return { from, to: addDays(from, 6) };
   }
-  if (preset === "this_year") return { from: `${today.slice(0, 4)}-01-01`, to: today };
-  return { from: `${today.slice(0, 8)}01`, to: today };
-}
-
-function previousPeriodRange(from: string, to: string) {
-  const inclusiveDays = Math.max(
-    1,
-    Math.round((Date.parse(`${to}T12:00:00`) - Date.parse(`${from}T12:00:00`)) / 86_400_000) + 1,
-  );
-  return {
-    from: addDays(from, -inclusiveDays),
-    to: addDays(from, -1),
-  };
-}
-
-function makeTrend(
-  current: number | string | null | undefined,
-  previous: number | string | null | undefined,
-): Trend {
-  if (current === undefined || previous === undefined)
-    return { direction: "flat", label: "—", description: "Comparing previous period" };
-
-  const currentValue = Number(current ?? 0);
-  const previousValue = Number(previous ?? 0);
-  if (previousValue === 0) {
-    if (currentValue === 0)
-      return { direction: "flat", label: "0%", description: "vs. previous period" };
-    return { direction: "up", label: "New", description: "vs. previous period" };
+  if (preset === "this_year") {
+    const year = today.slice(0, 4);
+    return { from: `${year}-01-01`, to: `${year}-12-31` };
   }
 
-  const change = ((currentValue - previousValue) / Math.abs(previousValue)) * 100;
+  const [year = 1970, month = 1] = today.slice(0, 7).split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   return {
-    direction: change > 0 ? "up" : change < 0 ? "down" : "flat",
-    label: `${Math.abs(change).toFixed(change >= 10 ? 0 : 1)}%`,
-    description: "vs. previous period",
+    from: `${today.slice(0, 8)}01`,
+    to: `${today.slice(0, 8)}${String(lastDay).padStart(2, "0")}`,
   };
 }
 
@@ -1157,43 +1139,246 @@ async function exportPdf(
     import("jspdf"),
     import("jspdf-autotable"),
   ]);
-  const doc = new jsPDF({ orientation: reportKind === "services" ? "landscape" : "portrait" });
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const logo = await getShopLogoDataUrl();
   const pageWidth = doc.internal.pageSize.getWidth();
-  doc.setFontSize(16);
-  const logoSize = 24;
-  const gap = 6;
-  const startX = (pageWidth - logoSize - gap - doc.getTextWidth(SHOP_EXPORT_NAME)) / 2;
-  doc.addImage(logo, "PNG", startX, 10, logoSize, logoSize);
-  doc.text(SHOP_EXPORT_NAME, startX + logoSize + gap, 26);
-  doc.setFontSize(11);
-  doc.text(title.toUpperCase(), 14, 54);
-  doc.setFontSize(9);
-  doc.text(`Generated: ${formatBusinessTimestamp()}`, 14, 60);
-  const scopeLines = doc.splitTextToSize(`Scope: ${scope}`, pageWidth - 28);
-  doc.text(scopeLines, 14, 66);
-  const summaryY = 66 + scopeLines.length * 5 + 4;
-  doc.setFontSize(10);
-  data.summary.forEach((line, index) => doc.text(line, 14, summaryY + index * 6));
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 12;
+  const colors = {
+    ink: [55, 43, 31] as [number, number, number],
+    paper: [255, 253, 247] as [number, number, number],
+    muted: [246, 241, 231] as [number, number, number],
+    border: [222, 211, 190] as [number, number, number],
+    primary: [185, 132, 26] as [number, number, number],
+    accent: [201, 88, 26] as [number, number, number],
+    success: [55, 133, 91] as [number, number, number],
+    chart: [75, 94, 155] as [number, number, number],
+    white: [255, 255, 255] as [number, number, number],
+  };
+
+  doc.setFillColor(...colors.paper);
+  doc.rect(0, 0, pageWidth, pageHeight, "F");
+
+  const drawHeader = (continuation = false) => {
+    doc.setFillColor(...colors.ink);
+    doc.roundedRect(
+      margin,
+      continuation ? 7 : 10,
+      pageWidth - margin * 2,
+      continuation ? 13 : 30,
+      3,
+      3,
+      "F",
+    );
+    if (continuation) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7);
+      doc.setTextColor(...colors.white);
+      doc.text(`${SHOP_EXPORT_NAME}  ·  ${title.toUpperCase()}`, margin + 5, 15);
+      doc.setDrawColor(...colors.primary);
+      doc.setLineWidth(0.6);
+      doc.line(margin, 21, pageWidth - margin, 21);
+      return;
+    }
+    // Keep the source logo's 360:202 aspect ratio while giving it a stronger
+    // presence in the header.
+    doc.addImage(logo, "PNG", margin + 4, 13, 42, 23.55);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...colors.white);
+    doc.setFontSize(15);
+    doc.text(SHOP_EXPORT_NAME, margin + 51, 21);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.text(SHOP.tagline, margin + 51, 27);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.text(title.toUpperCase(), pageWidth - margin - 5, 20, { align: "right" });
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.text(`Generated: ${formatBusinessTimestamp()}`, pageWidth - margin - 5, 27, {
+      align: "right",
+    });
+  };
+
+  drawHeader();
+  const periodY = 47;
+  doc.setFillColor(...colors.muted);
+  doc.setDrawColor(...colors.border);
+  doc.roundedRect(margin, periodY, pageWidth - margin * 2, 21, 2, 2, "FD");
+  doc.setDrawColor(...colors.primary);
+  doc.setLineWidth(1.1);
+  doc.line(margin + 6, periodY + 4, margin + 6, periodY + 11);
+  doc.line(margin + 3, periodY + 6, margin + 9, periodY + 6);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(...colors.ink);
+  doc.setFontSize(7);
+  doc.text("REPORT PERIOD", margin + 14, periodY + 6);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10.5);
+  doc.text(`${formatDateRange(from, to)}`, margin + 14, periodY + 11.5);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(5.6);
+  const scopeLines = doc.splitTextToSize(`Filters: ${scope}`, pageWidth - margin * 2 - 28);
+  doc.text(scopeLines, margin + 14, periodY + 16);
+
+  const drawSectionHeading = (label: string, y: number) => {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(...colors.ink);
+    doc.text(label.toUpperCase(), margin + 10, y);
+    doc.setDrawColor(...colors.primary);
+    doc.setLineWidth(0.45);
+    doc.line(margin + 52, y - 1, pageWidth - margin, y - 1);
+  };
+
+  drawSectionHeading("Report summary", 75);
+  const cardGap = 4;
+  const cardY = 79;
+  const cardH = 25;
+  const cardW = (pageWidth - margin * 2 - cardGap * 3) / 4;
+  const cardColors = {
+    primary: { fill: [255, 246, 220] as [number, number, number], line: colors.primary },
+    success: { fill: [235, 247, 238] as [number, number, number], line: colors.success },
+    accent: { fill: [255, 239, 226] as [number, number, number], line: colors.accent },
+    chart: { fill: [237, 240, 252] as [number, number, number], line: colors.chart },
+  };
+  data.cards.forEach((card, index) => {
+    const x = margin + index * (cardW + cardGap);
+    const palette = cardColors[card.tone];
+    doc.setFillColor(...palette.fill);
+    doc.setDrawColor(...colors.border);
+    doc.roundedRect(x, cardY, cardW, cardH, 2, 2, "FD");
+    doc.setFillColor(...palette.line);
+    doc.circle(x + 9, cardY + 10, 5.5, "F");
+    doc.setTextColor(...colors.white);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(card.tone === "accent" ? 6 : 9);
+    doc.text(
+      card.tone === "success"
+        ? "✓"
+        : card.tone === "accent"
+          ? "P"
+          : card.tone === "chart"
+            ? "#"
+            : "B",
+      x + 9,
+      cardY + 12,
+      { align: "center" },
+    );
+    doc.setTextColor(...colors.ink);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.5);
+    doc.text(card.label.toUpperCase(), x + 18, cardY + 7);
+    doc.setFontSize(card.value.length > 16 ? 10 : 14);
+    doc.text(card.value, x + 18, cardY + 15.5);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(5.8);
+    doc.setTextColor(...colors.ink);
+    doc.text(doc.splitTextToSize(card.detail, cardW - 20), x + 18, cardY + 21);
+  });
+
+  drawSectionHeading(
+    reportKind === "services" ? "Service entries" : "Bookings for selected period",
+    113,
+  );
   autoTable(doc, {
-    startY: summaryY + data.summary.length * 6 + 4,
+    startY: 117,
     head: [data.headers],
     body: data.rows,
     theme: "grid",
-    margin: { bottom: 48 },
-    styles: { fontSize: 8 },
-    headStyles: { fillColor: [220, 220, 220], textColor: [0, 0, 0] },
+    margin: { left: margin, right: margin, top: 27, bottom: 34 },
+    styles: {
+      font: "helvetica",
+      fontSize: 7.2,
+      cellPadding: 2.1,
+      textColor: colors.ink,
+      lineColor: colors.border,
+      lineWidth: 0.2,
+      valign: "middle",
+    },
+    headStyles: {
+      fillColor: colors.ink,
+      textColor: colors.white,
+      fontStyle: "bold",
+      fontSize: 7.2,
+      cellPadding: 2.7,
+    },
+    alternateRowStyles: { fillColor: colors.paper },
+    columnStyles:
+      reportKind === "services"
+        ? {
+            0: { cellWidth: 29 },
+            1: { cellWidth: 38 },
+            2: { cellWidth: 40 },
+            3: { cellWidth: 27 },
+            4: { cellWidth: 42 },
+            5: { cellWidth: 34 },
+            6: { cellWidth: 35, halign: "right" },
+          }
+        : {
+            0: { cellWidth: 35 },
+            1: { cellWidth: 43 },
+            2: { cellWidth: 51 },
+            3: { cellWidth: 52 },
+            4: { cellWidth: 29, halign: "center" },
+            5: { cellWidth: 39, halign: "right" },
+          },
+    didParseCell: (hook) => {
+      const statusIndex = data.headers.indexOf("Status");
+      if (hook.section === "body" && hook.column.index === statusIndex) {
+        hook.cell.styles.fontStyle = "bold";
+        hook.cell.styles.halign = "center";
+        const status = String(hook.cell.raw ?? "").toLowerCase();
+        if (status.includes("completed")) hook.cell.styles.textColor = colors.success;
+        else if (
+          status.includes("cancelled") ||
+          status.includes("rejected") ||
+          status.includes("no show")
+        )
+          hook.cell.styles.textColor = [177, 56, 43];
+        else if (status.includes("confirmed")) hook.cell.styles.textColor = colors.chart;
+        else if (status.includes("pending") || status.includes("rescheduled"))
+          hook.cell.styles.textColor = colors.accent;
+      }
+    },
+    didDrawPage: (hook) => {
+      if (hook.pageNumber > 1) drawHeader(true);
+    },
   });
-  const pageHeight = doc.internal.pageSize.getHeight();
-  const signatureY = pageHeight - 29;
+  const finalY =
+    (doc as typeof doc & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 112;
   doc.setPage(doc.getNumberOfPages());
-  doc.setDrawColor(80);
-  doc.line(pageWidth - 78, signatureY, pageWidth - 14, signatureY);
-  doc.setFontSize(10);
-  doc.text(SHOP_OWNER_NAME, pageWidth - 46, signatureY + 6, { align: "center" });
+  const signatureTop = pageHeight - 24;
+  let totalY = finalY + 9;
+  // Keep the total and both signatures together on the final page. When the
+  // final table is too long, use a dedicated sign-off page rather than
+  // crowding either element below the table.
+  if (totalY + 13 > signatureTop - 10) {
+    doc.addPage();
+    drawHeader(true);
+    totalY = 31;
+  }
+  doc.setFillColor(...colors.muted);
+  doc.setDrawColor(...colors.border);
+  doc.roundedRect(margin, totalY - 5, pageWidth - margin * 2, 11, 1.5, 1.5, "FD");
+  doc.setTextColor(...colors.ink);
+  doc.setFont("helvetica", "bold");
   doc.setFontSize(8);
-  doc.text("Shop Owner", pageWidth - 46, signatureY + 11, { align: "center" });
-  doc.text("Signature over printed name", pageWidth - 46, signatureY - 3, { align: "center" });
+  doc.text("TOTAL AMOUNT", pageWidth - margin - 61, totalY + 2);
+  doc.setFontSize(11);
+  doc.text(formatPHP(data.totalAmount), pageWidth - margin - 4, totalY + 2, { align: "right" });
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7);
+  doc.text("Prepared By", margin + 2, signatureTop);
+  doc.setDrawColor(...colors.border);
+  doc.line(margin + 2, signatureTop + 14, margin + 72, signatureTop + 14);
+  doc.text("Approved By", pageWidth - margin - 72, signatureTop);
+  doc.setFont("helvetica", "bold");
+  doc.text(SHOP_OWNER_NAME, pageWidth - margin - 36, signatureTop + 6, { align: "center" });
+  doc.setFont("helvetica", "normal");
+  doc.text("Shop Owner", pageWidth - margin - 36, signatureTop + 10, { align: "center" });
+  doc.line(pageWidth - margin - 72, signatureTop + 14, pageWidth - margin, signatureTop + 14);
   doc.save(`fake-rider-${fileName(reportKind)}-${from}-to-${to}.pdf`);
 }
 
@@ -1207,8 +1392,11 @@ async function exportDocx(
 ) {
   const {
     AlignmentType,
+    BorderStyle,
     Document,
+    ImageRun,
     Packer,
+    PageOrientation,
     Paragraph,
     Table,
     TableCell,
@@ -1216,65 +1404,300 @@ async function exportDocx(
     TextRun,
     WidthType,
   } = await import("docx");
-
+  const logoData = dataUrlToUint8Array(await getShopLogoDataUrl());
+  const border = { style: BorderStyle.SINGLE, color: "DED3BE", size: 5 };
+  const tableBorders = {
+    top: border,
+    bottom: border,
+    left: border,
+    right: border,
+    insideHorizontal: border,
+    insideVertical: border,
+  };
+  const text = (value: string, options: Record<string, unknown> = {}) =>
+    new TextRun({ text: value, font: "Arial", size: 17, ...options });
   const headerRow = new TableRow({
     tableHeader: true,
     children: data.headers.map(
       (header) =>
         new TableCell({
+          shading: { fill: "372B1F" },
+          margins: { top: 90, bottom: 90, left: 90, right: 90 },
           children: [
-            new Paragraph({
-              children: [new TextRun({ text: header, bold: true, size: 18 })],
-            }),
+            new Paragraph({ children: [text(header, { bold: true, color: "FFFFFF", size: 16 })] }),
           ],
         }),
     ),
   });
   const rows = data.rows.map(
-    (row) =>
+    (row, rowIndex) =>
       new TableRow({
         children: row.map(
-          (cell) =>
+          (cell, cellIndex) =>
             new TableCell({
-              children: [new Paragraph({ children: [new TextRun({ text: cell, size: 18 })] })],
+              shading: rowIndex % 2 === 1 ? { fill: "FFFDF7" } : { fill: "FFFFFF" },
+              margins: { top: 75, bottom: 75, left: 90, right: 90 },
+              children: [
+                new Paragraph({
+                  alignment:
+                    cellIndex === row.length - 1 ? AlignmentType.RIGHT : AlignmentType.LEFT,
+                  children: [
+                    text(cell, { color: "372B1F", bold: data.headers[cellIndex] === "Status" }),
+                  ],
+                }),
+              ],
             }),
         ),
       }),
   );
+  const summaryCards = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    columnWidths: [3900, 3900, 3900, 3900],
+    borders: tableBorders,
+    rows: [
+      new TableRow({
+        children: data.cards.map(
+          (card) =>
+            new TableCell({
+              shading: {
+                fill:
+                  card.tone === "primary"
+                    ? "FFF6DC"
+                    : card.tone === "success"
+                      ? "EBF7EE"
+                      : card.tone === "accent"
+                        ? "FFEFE2"
+                        : "EDF0FC",
+              },
+              margins: { top: 120, bottom: 120, left: 110, right: 110 },
+              children: [
+                new Paragraph({
+                  children: [
+                    text(card.label.toUpperCase(), { bold: true, size: 14, color: "6A5C4B" }),
+                  ],
+                }),
+                new Paragraph({
+                  children: [
+                    text(card.value, {
+                      bold: true,
+                      size: card.value.length > 16 ? 22 : 28,
+                      color: "B9841A",
+                    }),
+                  ],
+                }),
+                new Paragraph({ children: [text(card.detail, { size: 13, color: "6A5C4B" })] }),
+              ],
+            }),
+        ),
+      }),
+    ],
+  });
+  const periodTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: tableBorders,
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            shading: { fill: "F6F1E7" },
+            margins: { top: 100, bottom: 100, left: 130, right: 130 },
+            children: [
+              new Paragraph({
+                children: [text("REPORT PERIOD", { bold: true, size: 14, color: "B9841A" })],
+              }),
+              new Paragraph({
+                children: [
+                  text(formatDateRange(from, to), { bold: true, size: 22, color: "372B1F" }),
+                ],
+              }),
+              new Paragraph({
+                children: [text(`Filters: ${scope}`, { size: 13, color: "6A5C4B" })],
+              }),
+            ],
+          }),
+        ],
+      }),
+    ],
+  });
+  const sectionHeading = (label: string) =>
+    new Paragraph({
+      spacing: { before: 180, after: 80 },
+      border: { bottom: { style: BorderStyle.SINGLE, color: "B9841A", size: 7, space: 1 } },
+      children: [text(label.toUpperCase(), { bold: true, size: 17, color: "372B1F" })],
+    });
+  const totalTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    columnWidths: [12500, 3200],
+    borders: tableBorders,
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            shading: { fill: "F6F1E7" },
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.RIGHT,
+                children: [text("TOTAL AMOUNT", { bold: true, size: 16, color: "372B1F" })],
+              }),
+            ],
+          }),
+          new TableCell({
+            shading: { fill: "F6F1E7" },
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.RIGHT,
+                children: [
+                  text(formatPHP(data.totalAmount), { bold: true, size: 19, color: "B9841A" }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      }),
+    ],
+  });
+  const signatureTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: {
+      top: { style: BorderStyle.NONE, color: "FFFFFF", size: 0 },
+      bottom: { style: BorderStyle.NONE, color: "FFFFFF", size: 0 },
+      left: { style: BorderStyle.NONE, color: "FFFFFF", size: 0 },
+      right: { style: BorderStyle.NONE, color: "FFFFFF", size: 0 },
+      insideVertical: { style: BorderStyle.NONE, color: "FFFFFF", size: 0 },
+    },
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            children: [
+              new Paragraph({ children: [text("Prepared By", { size: 14, color: "6A5C4B" })] }),
+              new Paragraph({
+                border: {
+                  bottom: { style: BorderStyle.SINGLE, color: "DED3BE", size: 5, space: 1 },
+                },
+                children: [text(" ", { size: 12 })],
+              }),
+            ],
+          }),
+          new TableCell({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.RIGHT,
+                children: [text("Approved By", { size: 14, color: "6A5C4B" })],
+              }),
+              new Paragraph({
+                alignment: AlignmentType.RIGHT,
+                children: [text(SHOP_OWNER_NAME, { bold: true, size: 15, color: "372B1F" })],
+              }),
+              new Paragraph({
+                alignment: AlignmentType.RIGHT,
+                children: [text("Shop Owner", { size: 13, color: "6A5C4B" })],
+              }),
+              new Paragraph({
+                border: {
+                  bottom: { style: BorderStyle.SINGLE, color: "DED3BE", size: 5, space: 1 },
+                },
+                children: [text(" ", { size: 12 })],
+              }),
+            ],
+          }),
+        ],
+      }),
+    ],
+  });
   const document = new Document({
     sections: [
       {
+        properties: {
+          page: {
+            size: { width: 16838, height: 11906, orientation: PageOrientation.LANDSCAPE },
+            margin: { top: 567, right: 567, bottom: 567, left: 567 },
+          },
+        },
         children: [
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: SHOP_EXPORT_NAME, bold: true, size: 32 })],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: title.toUpperCase(), bold: true, size: 24 })],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: `Generated: ${formatBusinessTimestamp()}`, size: 18 })],
-          }),
-          new Paragraph({ children: [new TextRun({ text: `Scope: ${scope}`, size: 18 })] }),
-          ...data.summary.map(
-            (line) => new Paragraph({ children: [new TextRun({ text: line, size: 18 })] }),
-          ),
-          new Paragraph({ text: "" }),
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
+            columnWidths: [10300, 5400],
+            borders: {
+              top: { style: BorderStyle.SINGLE, color: "372B1F", size: 12 },
+              bottom: { style: BorderStyle.SINGLE, color: "372B1F", size: 12 },
+              left: { style: BorderStyle.SINGLE, color: "372B1F", size: 12 },
+              right: { style: BorderStyle.SINGLE, color: "372B1F", size: 12 },
+              insideVertical: { style: BorderStyle.SINGLE, color: "372B1F", size: 2 },
+            },
+            rows: [
+              new TableRow({
+                children: [
+                  new TableCell({
+                    shading: { fill: "372B1F" },
+                    margins: { top: 100, bottom: 100, left: 130, right: 130 },
+                    children: [
+                      new Paragraph({
+                        children: [
+                          new ImageRun({
+                            data: logoData,
+                            type: "png",
+                            // 360:202 source ratio; larger without distortion.
+                            transformation: { width: 105, height: 59 },
+                          }),
+                        ],
+                      }),
+                      new Paragraph({
+                        children: [
+                          text(SHOP_EXPORT_NAME, { bold: true, size: 22, color: "FFFFFF" }),
+                        ],
+                      }),
+                      new Paragraph({
+                        children: [text(SHOP.tagline, { size: 13, color: "F6F1E7" })],
+                      }),
+                    ],
+                  }),
+                  new TableCell({
+                    shading: { fill: "372B1F" },
+                    margins: { top: 100, bottom: 100, left: 130, right: 130 },
+                    children: [
+                      new Paragraph({
+                        alignment: AlignmentType.RIGHT,
+                        children: [
+                          text(title.toUpperCase(), { bold: true, size: 24, color: "FFFFFF" }),
+                        ],
+                      }),
+                      new Paragraph({
+                        alignment: AlignmentType.RIGHT,
+                        children: [
+                          text(`Generated: ${formatBusinessTimestamp()}`, {
+                            size: 14,
+                            color: "F6F1E7",
+                          }),
+                        ],
+                      }),
+                    ],
+                  }),
+                ],
+              }),
+            ],
+          }),
+          periodTable,
+          sectionHeading("Report summary"),
+          summaryCards,
+          sectionHeading(
+            reportKind === "services" ? "Service entries" : "Bookings for selected period",
+          ),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            borders: tableBorders,
             rows: [headerRow, ...rows],
           }),
-          new Paragraph({ text: "" }),
           new Paragraph({
-            alignment: AlignmentType.RIGHT,
-            children: [new TextRun({ text: SHOP_OWNER_NAME, bold: true, size: 18 })],
+            spacing: { before: 360, after: 180 },
+            children: [text(" ", { size: 10 })],
           }),
+          totalTable,
           new Paragraph({
-            alignment: AlignmentType.RIGHT,
-            children: [new TextRun({ text: "Shop Owner", size: 16 })],
+            spacing: { before: 260, after: 120 },
+            children: [text(" ", { size: 10 })],
           }),
+          signatureTable,
         ],
       },
     ],
@@ -1287,6 +1710,14 @@ async function exportDocx(
   );
 }
 
+function dataUrlToUint8Array(dataUrl: string) {
+  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
 function downloadBlob(contents: BlobPart, filename: string, type: string) {
   const url = URL.createObjectURL(new Blob([contents], { type }));
   const link = document.createElement("a");
@@ -1296,91 +1727,43 @@ function downloadBlob(contents: BlobPart, filename: string, type: string) {
   URL.revokeObjectURL(url);
 }
 function fileName(reportKind: ReportKind) {
-  return reportKind === "services" ? "service-activity-report" : "booking-volume-report";
-}
-
-function statusBarTone(status: string) {
-  if (status === "completed") return "bg-sky-500";
-  if (status === "cancelled" || status === "rejected" || status === "no_show") {
-    return "bg-destructive";
-  }
-  if (status === "in_progress") return "bg-accent";
-  if (status === "confirmed") return "bg-emerald-500";
-  return "bg-muted-foreground";
+  return reportKind === "services" ? "service-activity-report" : "booking-report";
 }
 
 function Stat({
   label,
   value,
-  trend,
+  detail,
   icon: Icon,
   iconClassName,
 }: {
   label: string;
   value: string;
-  trend: Trend;
+  detail: string;
   icon: LucideIcon;
   iconClassName?: string;
 }) {
   return (
-    <Card className="border-border/70 bg-card/60">
-      <CardContent className="p-4 sm:p-5">
-        <div className="flex items-center gap-3">
+    <Card className="border-border/70 bg-card/70 shadow-sm">
+      <CardContent className="p-3.5 sm:p-4">
+        <div className="flex items-center gap-2.5">
           <span
             className={cn(
-              "grid size-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary",
+              "grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary",
               iconClassName,
             )}
           >
-            <Icon className="size-4" aria-hidden="true" />
+            <Icon className="size-3.5" aria-hidden="true" />
           </span>
-          <p className="text-xs tracking-wider text-muted-foreground uppercase">{label}</p>
-        </div>
-        <div className="mt-3 flex items-end justify-between gap-3">
-          <div>
-            <p className="font-display text-2xl text-primary">{value}</p>
-            <p
-              className={cn(
-                "mt-2 flex items-center gap-1 text-xs font-medium",
-                trend.direction === "up" && "text-emerald-500",
-                trend.direction === "down" && "text-destructive",
-                trend.direction === "flat" && "text-muted-foreground",
-              )}
-            >
-              {trend.direction === "up" && <TrendingUp className="size-3.5" aria-hidden="true" />}
-              {trend.direction === "down" && (
-                <TrendingDown className="size-3.5" aria-hidden="true" />
-              )}
-              {trend.label}
+          <div className="min-w-0">
+            <p className="truncate text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+              {label}
             </p>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">{trend.description}</p>
+            <p className="mt-0.5 font-display text-2xl leading-none text-primary">{value}</p>
           </div>
-          <TrendLine direction={trend.direction} />
         </div>
+        <p className="mt-2 truncate text-[11px] text-muted-foreground">{detail}</p>
       </CardContent>
     </Card>
-  );
-}
-
-function TrendLine({ direction }: Pick<Trend, "direction">) {
-  const path =
-    direction === "up"
-      ? "M2 25 L13 16 L23 19 L34 8 L46 12 L58 2"
-      : direction === "down"
-        ? "M2 4 L13 13 L23 10 L34 21 L46 17 L58 28"
-        : "M2 16 L13 16 L23 15 L34 16 L46 15 L58 16";
-  return (
-    <svg
-      viewBox="0 0 60 30"
-      className={cn(
-        "h-8 w-14 shrink-0",
-        direction === "up" && "text-emerald-500",
-        direction === "down" && "text-destructive",
-        direction === "flat" && "text-muted-foreground",
-      )}
-      aria-hidden="true"
-    >
-      <path d={path} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
   );
 }

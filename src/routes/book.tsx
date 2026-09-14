@@ -1051,7 +1051,7 @@ function BookPage() {
               <>
                 {isReschedule && (
                   <div className="mb-5">
-                    <Label htmlFor="reschedule-reason">Reason for rescheduling</Label>
+                    <Label htmlFor="reschedule-reason">Reason for Rescheduling</Label>
                     <Textarea
                       id="reschedule-reason"
                       value={rescheduleReason}

@@ -140,6 +140,7 @@ function NotificationsPage() {
       refresh();
       queryClient.invalidateQueries({ queryKey: ["admin-appointments"], exact: false });
       queryClient.invalidateQueries({ queryKey: ["admin-dashboard"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["reports"], exact: false });
       queryClient.invalidateQueries({ queryKey: ["archived-appointments"], exact: false });
     },
     onError: (err: Error) => {
@@ -165,12 +166,13 @@ function NotificationsPage() {
     onSuccess: (_, { decision }) => {
       toast.success(
         decision === "confirmed"
-          ? "Reschedule request confirmed. The appointment has been moved."
+          ? "Reschedule request confirmed. A new linked booking was created with its own reference code."
           : "Reschedule request rejected. The original appointment remains reserved.",
       );
       refresh();
       queryClient.invalidateQueries({ queryKey: ["admin-appointments"], exact: false });
       queryClient.invalidateQueries({ queryKey: ["admin-dashboard"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["reports"], exact: false });
     },
     onError: (err: Error) => {
       console.error("Reschedule review failed:", err);

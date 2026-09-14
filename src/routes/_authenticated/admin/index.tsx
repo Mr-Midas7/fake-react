@@ -39,17 +39,20 @@ export const Route = createFileRoute("/_authenticated/admin/")({
 });
 
 const appointmentChartConfig = {
-  completed: { label: "Completed", color: "var(--chart-3)" },
-  pending: { label: "Pending", color: "var(--primary)" },
-  cancelled: { label: "Cancelled", color: "var(--destructive)" },
-  other: { label: "Other", color: "var(--chart-4)" },
+  completed: { label: "Complete", color: "var(--chart-3)" },
+  confirmed: { label: "Confirmed", color: "var(--primary)" },
+  cancelled: { label: "Canceled", color: "var(--destructive)" },
+  in_progress: { label: "In Progress", color: "var(--chart-4)" },
 } satisfies ChartConfig;
 
 const statusChartConfig = {
-  confirmed: { label: "Confirmed", color: "var(--chart-3)" },
-  completed: { label: "Completed", color: "var(--chart-4)" },
-  cancelled: { label: "Cancelled", color: "var(--destructive)" },
   pending: { label: "Pending", color: "var(--primary)" },
+  confirmed: { label: "Confirmed", color: "var(--chart-3)" },
+  in_progress: { label: "In Progress", color: "var(--chart-4)" },
+  completed: { label: "Complete", color: "var(--chart-2)" },
+  rescheduled: { label: "Rescheduled", color: "var(--chart-5)" },
+  cancelled: { label: "Canceled", color: "var(--destructive)" },
+  no_show: { label: "No Show", color: "var(--muted-foreground)" },
 } satisfies ChartConfig;
 
 type DashboardAppointment = {
@@ -187,48 +190,69 @@ function Dashboard() {
     return {
       day: bucket.label,
       completed: dayAppointments.filter((appointment) => appointment.status === "completed").length,
-      pending: dayAppointments.filter((appointment) => appointment.status === "pending").length,
+      confirmed: dayAppointments.filter((appointment) => appointment.status === "confirmed").length,
       cancelled: dayAppointments.filter((appointment) =>
         ["cancelled", "rejected", "no_show"].includes(appointment.status),
       ).length,
-      other: dayAppointments.filter((appointment) =>
-        ["confirmed", "in_progress"].includes(appointment.status),
-      ).length,
+      in_progress: dayAppointments.filter((appointment) => appointment.status === "in_progress")
+        .length,
     };
   });
   const bookingStatuses = [
-    {
-      key: "confirmed",
-      label: "Confirmed",
-      value: dashboardAppointments.filter((appointment) =>
-        ["confirmed", "in_progress"].includes(appointment.status),
-      ).length,
-      color: "var(--chart-3)",
-      dotClassName: "bg-chart-3",
-    },
-    {
-      key: "completed",
-      label: "Completed",
-      value: dashboardAppointments.filter((appointment) => appointment.status === "completed")
-        .length,
-      color: "var(--chart-4)",
-      dotClassName: "bg-chart-4",
-    },
-    {
-      key: "cancelled",
-      label: "Cancelled",
-      value: dashboardAppointments.filter((appointment) =>
-        ["cancelled", "rejected", "no_show"].includes(appointment.status),
-      ).length,
-      color: "var(--destructive)",
-      dotClassName: "bg-destructive",
-    },
     {
       key: "pending",
       label: "Pending",
       value: dashboardAppointments.filter((appointment) => appointment.status === "pending").length,
       color: "var(--primary)",
       dotClassName: "bg-primary",
+    },
+    {
+      key: "confirmed",
+      label: "Confirmed",
+      value: dashboardAppointments.filter((appointment) => appointment.status === "confirmed")
+        .length,
+      color: "var(--chart-3)",
+      dotClassName: "bg-chart-3",
+    },
+    {
+      key: "in_progress",
+      label: "In Progress",
+      value: dashboardAppointments.filter((appointment) => appointment.status === "in_progress")
+        .length,
+      color: "var(--chart-4)",
+      dotClassName: "bg-chart-4",
+    },
+    {
+      key: "completed",
+      label: "Complete",
+      value: dashboardAppointments.filter((appointment) => appointment.status === "completed")
+        .length,
+      color: "var(--chart-2)",
+      dotClassName: "bg-chart-2",
+    },
+    {
+      key: "rescheduled",
+      label: "Rescheduled",
+      value: dashboardAppointments.filter((appointment) => appointment.status === "rescheduled")
+        .length,
+      color: "var(--chart-5)",
+      dotClassName: "bg-chart-5",
+    },
+    {
+      key: "cancelled",
+      label: "Canceled",
+      value: dashboardAppointments.filter((appointment) =>
+        ["cancelled", "rejected"].includes(appointment.status),
+      ).length,
+      color: "var(--destructive)",
+      dotClassName: "bg-destructive",
+    },
+    {
+      key: "no_show",
+      label: "No Show",
+      value: dashboardAppointments.filter((appointment) => appointment.status === "no_show").length,
+      color: "var(--muted-foreground)",
+      dotClassName: "bg-muted-foreground",
     },
   ];
   const bookingStatusTotal = bookingStatuses.reduce((sum, status) => sum + status.value, 0);
@@ -348,8 +372,8 @@ function Dashboard() {
                   minPointSize={2}
                 />
                 <Bar
-                  dataKey="pending"
-                  fill="var(--color-pending)"
+                  dataKey="confirmed"
+                  fill="var(--color-confirmed)"
                   radius={[3, 3, 0, 0]}
                   minPointSize={2}
                 />
@@ -360,8 +384,8 @@ function Dashboard() {
                   minPointSize={2}
                 />
                 <Bar
-                  dataKey="other"
-                  fill="var(--color-other)"
+                  dataKey="in_progress"
+                  fill="var(--color-in_progress)"
                   radius={[3, 3, 0, 0]}
                   minPointSize={2}
                 />

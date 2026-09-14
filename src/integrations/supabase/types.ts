@@ -152,6 +152,7 @@ export type Database = {
           phone: string;
           plate_number: string;
           pending_reschedule_date: string | null;
+          pending_reschedule_reference_code: string | null;
           pending_reschedule_reason: string | null;
           pending_reschedule_request_id: string | null;
           pending_reschedule_start_time: string | null;
@@ -193,6 +194,7 @@ export type Database = {
           phone: string;
           plate_number: string;
           pending_reschedule_date?: string | null;
+          pending_reschedule_reference_code?: string | null;
           pending_reschedule_reason?: string | null;
           pending_reschedule_request_id?: string | null;
           pending_reschedule_start_time?: string | null;
@@ -234,6 +236,7 @@ export type Database = {
           phone?: string;
           plate_number?: string;
           pending_reschedule_date?: string | null;
+          pending_reschedule_reference_code?: string | null;
           pending_reschedule_reason?: string | null;
           pending_reschedule_request_id?: string | null;
           pending_reschedule_start_time?: string | null;
